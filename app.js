@@ -506,6 +506,7 @@ function renderRecipe() {
         </ul>
         ${pending ? '' : `<button class="btn ${m ? 'ok' : 'ghost'}" data-act="menuSheet">${m ? '✓ Au menu : ' + esc(jourNom(m.jour)) + (base ? ' · ' + fmt(num(m.portions) || base) + ' ' + esc(r.unitePortions) : '') + ' — modifier' : '🗓 Ajouter au menu' + (base ? ' (' + fmt(S.portions) + ' ' + esc(r.unitePortions) + ')' : '')}</button>`}
       </section>` : ''}
+      ${m ? (b => b ? `<div style="margin:12px 0">${b}</div>` : '')(batchHtml(suggestionsBatch([r.titre], 3), 'À cuisiner en même temps')) : ''}
       ${etapes.length ? `
       <section>
         <h3>Préparation</h3>
@@ -692,7 +693,100 @@ function setJour(j) {
   if (m) { m.jour = j; if (S.view === 'recipe' && base) m.portions = S.portions; }
   else menu.push({ id: uid(), titre, portions: base ? (S.view === 'recipe' ? S.portions : base) : '', jour: j });
   store.set('menu', menu); closeModal(); renderKeep();
-  toast('Ajouté au menu : ' + jourNom(j) + '. La liste de courses est à jour.');
+  const n = suggestionsBatch(menu.map(x => x.titre), 5).length;
+  toast('Ajouté au menu : ' + jourNom(j) + '.' + (n ? ' 💡 ' + n + ' idée' + (n > 1 ? 's' : '') + ' de batch cooking dans Menu & courses.' : ' La liste de courses est à jour.'), 4500);
+}
+
+/* ---------- Suggestions batch cooking ---------- */
+// Sans IA : on compare les ingrédients frais en commun et les procédés (four à la même température, mixeur, mijoté…).
+let batchIgnore = store.get('batchIgnore', []);
+const RAYONS_FRAIS = ['Fruits', 'Légumes et herbes', 'Crèmerie et œufs', 'Boucherie et poissonnerie', 'Boulangerie'];
+const BASIQUES = ['garni', 'sel', 'poivre', 'huile', 'eau', 'sucre', 'farine', 'beurre', 'ail', 'oignon', 'echalote', 'bouillon', 'levure', 'vinaigre', 'moutarde', 'cube', 'fecule', 'maizena', 'bicarbonate', 'sauce soja', 'miel'];
+const QUALIFS = /\b(frais|fraiche|fraiches|gros|grosse|grosses|petit|petite|petits|petites|beau|belle|bio|entier|entiere|moyen|moyenne|hache|hachee|haches|hachees|rape|rapee|rapes|emince|emincee|emincees|egoutte|surgele|surgeles|surgelee|cuit|cuite|cuits|cuites)\b/g;
+const MESURES = /^((petit |gros |grand |beau |belle )?(cm|bouquet|brin|brins|branche|branches|feuille|feuilles|pincee|tranche|tranches|gousse|gousses|filet|botte|poignee|morceau|morceaux|zeste|jus|boule|bloc|tete|pot|sachet|boite)\s+(de |d'|du |des )?)+/;
+function nomCourt(nom) {
+  let n = norm(nom).replace(/\(.*?\)/g, ' ').split(/[,;:]| ou /)[0].replace(QUALIFS, ' ').replace(/\s+/g, ' ').trim();
+  return n.replace(/^(de |d'|des |du |la |le |les |l')+/, '').replace(MESURES, '').trim();
+}
+// Même nettoyage, mais en gardant les accents pour l'affichage
+const MOTS_TETE = ['de', "d'", 'du', 'des', 'la', 'le', 'les', "l'", 'petit', 'petite', 'gros', 'grosse', 'grand', 'beau', 'belle', 'cm', 'bouquet', 'brin', 'brins', 'branche', 'branches', 'feuille', 'feuilles', 'pincee', 'tranche', 'tranches', 'gousse', 'gousses', 'filet', 'botte', 'poignee', 'morceau', 'morceaux', 'zeste', 'jus', 'boule', 'bloc', 'tete', 'pot', 'sachet', 'boite'];
+function nomAffiche(nom) {
+  const s = String(nom).toLowerCase().replace(/\(.*?\)/g, ' ').split(/[,;:]| ou /)[0];
+  let mots = s.split(/\s+/).filter(Boolean).filter(w => !norm(w).replace(QUALIFS, '').trim() === false || norm(w).replace(QUALIFS, '').trim());
+  while (mots.length > 1 && MOTS_TETE.includes(norm(mots[0]))) mots.shift();
+  if (mots.length && /^(d'|l')/.test(norm(mots[0])) && mots[0].length > 2) mots[0] = mots[0].slice(2);
+  return mots.join(' ');
+}
+function cleIngredient(nom) {
+  const n = nomCourt(nom);
+  const m = n.match(/^([a-z'-]+)(?:\s+(de|d'|a|au|aux)\s*([a-z'-]+))?/);
+  if (!m) return '';
+  const sing = w => w.replace(/(x|s)$/, '');
+  if (m[2] && ['pomme', 'pommes', 'lait', 'noix', 'pois', 'feuille', 'feuilles', 'fond', 'jambon', 'fromage', 'pate', 'pates', 'creme', 'chou', 'choux'].includes(m[1]))
+    return sing(m[1]) + ' ' + m[2] + ' ' + sing(m[3]);
+  return sing(m[1]);
+}
+const PROCEDES = [
+  ['four', /\b(four|enfourn|rotir|roti|gratin|gratiner)/],
+  ['mixeur', /\b(mix|blender|velout)/],
+  ['mijoté', /\b(mijot|cocotte|braiser)/],
+  ['pâte à tarte', /\b(pate (brisee|feuilletee|sablee|a tarte|a quiche)|fond de tarte|abaisse)/],
+  ['eau bouillante (pâtes, riz)', /\b(eau bouillante|cuire les pates|cuisson des pates|al dente|cuire le riz)/],
+  ['vapeur', /\b(vapeur|varoma)/]
+];
+const profils = {};
+function profilBatch(r) {
+  if (profils[r.titre] && profils[r.titre].src === r.etapes) return profils[r.titre];
+  const ings = {};
+  (DATA.ingredients[r.titre] || []).forEach(i => {
+    if (enStock(i.n) || norm(i.rayon) === norm('Épices et huiles')) return;
+    const k = cleIngredient(i.n);
+    if (!k || BASIQUES.some(b => k === b || k.startsWith(b + ' '))) return;
+    const courant = ['citron', 'creme', 'lait', 'parmesan', 'oeuf', 'œuf', 'pain', 'persil', 'thym', 'laurier', 'romarin'].some(c => k === c || k.startsWith(c + ' '));
+    ings[k] = { nom: nomAffiche(i.n), poids: courant ? 0.7 : RAYONS_FRAIS.includes(i.rayon) ? 2 : 0.5 };
+  });
+  const t = norm(r.etapes);
+  const proc = PROCEDES.filter(([, rx]) => rx.test(t)).map(([l]) => l);
+  if (norm(r.typeSource) === 'thermomix' || /thermomix|vitesse \d/.test(t)) proc.push('Thermomix');
+  const mt = t.match(/(?:four|prechauff)[^.]{0,60}?(\d{3})\s*°?\s*c\b/) || t.match(/(\d{3})\s*°?\s*c\b[^.]{0,30}(?:four|chaleur tournante)/);
+  const temp = mt && mt[1];
+  return (profils[r.titre] = { src: r.etapes, ings, proc, temp: temp ? +temp : null });
+}
+function suggestionsBatch(seeds, max) {
+  const base = seeds.map(rec).filter(Boolean);
+  if (!base.length) return [];
+  const pris = new Set(menu.map(m => m.titre).concat(batchIgnore));
+  const pa = base.map(profilBatch);
+  return DATA.recettes.filter(r => r.statut !== A_VALIDER && !pris.has(r.titre) && !seeds.includes(r.titre)).map(r => {
+    const p = profilBatch(r);
+    let score = 0; const communs = new Map(), procs = new Set(); let four = null;
+    pa.forEach(a => {
+      Object.keys(p.ings).forEach(k => { if (a.ings[k]) { communs.set(k, p.ings[k].nom); } });
+      p.proc.forEach(x => { if (a.proc.includes(x)) procs.add(x); });
+      if (p.temp && a.temp && Math.abs(p.temp - a.temp) <= 10 && p.proc.includes('four')) four = a.temp;
+    });
+    communs.forEach((nom, k) => { score += Math.max(...pa.map(a => a.ings[k] ? Math.min(a.ings[k].poids, p.ings[k].poids) : 0)); });
+    score += procs.size * 0.7 + (four ? 1 : 0);
+    if (r.types.includes("À l'avance")) score += 0.5;
+    const sucre = x => x.types.some(t => ['Dessert', 'Goûter'].includes(t));
+    if (sucre(r) !== base.some(sucre)) score -= 1.5;
+    const s = saisonActuelle(), ls = saisonsDe(r);
+    if (ls.length && !ls.includes(s)) score -= 1;
+    const raisons = [];
+    if (communs.size) raisons.push('en commun : ' + Array.from(communs.values()).slice(0, 4).join(', '));
+    if (four) raisons.push('même four à ' + four + ' °C');
+    const autres = Array.from(procs).filter(x => !(four && x === 'four'));
+    if (autres.length) raisons.push(autres.join(', '));
+    return { r, score, raisons, communs: communs.size };
+  }).filter(x => x.score >= 2.5 && x.communs).sort((a, b) => b.score - a.score).slice(0, max || 5);
+}
+function batchHtml(list, titre) {
+  if (!list.length) return '';
+  return `<div class="batch"><div class="batch-h">💡 ${titre}</div>
+    ${list.map(x => `<div class="batch-i">
+      <div class="name" data-act="open" data-t="${esc(x.r.titre)}"><b>${esc(x.r.titre)}</b><small>${esc(x.raisons.join(' · '))}</small></div>
+      <button class="go" data-act="batchAdd" data-t="${esc(x.r.titre)}">＋ Menu</button>
+      <button class="x" data-act="batchHide" data-t="${esc(x.r.titre)}" title="Ne plus proposer cette semaine">✕</button></div>`).join('')}</div>`;
 }
 
 /* ---------- Liste de courses ---------- */
@@ -763,6 +857,7 @@ function renderCourses() {
           <select class="field" id="addJ" style="flex:0 0 30%">${JOURS.map(([j, l]) => `<option value="${j}">${l}</option>`).join('')}</select>
           <button class="go" data-act="addMenu">＋</button>
         </div>
+        ${batchHtml(suggestionsBatch(menu.map(x => x.titre), 5), 'Idées batch cooking : à cuisiner en même temps')}
       </section>
 
       <section>
@@ -1079,9 +1174,11 @@ const ACT = {
   stockDel: el => { const n = norm(el.dataset.n); stock = stock.filter(s => !(n === norm(s) || n.startsWith(norm(s) + ' '))); store.set('stock', stock); renderKeep(); },
   stockDelI: el => { stock.splice(+el.dataset.i, 1); store.set('stock', stock); renderKeep(); },
   stockNew: () => { const v = $('sNom').value.trim(); if (v && !enStock(v)) { stock.push(v); store.set('stock', stock); } renderKeep(); },
+  batchAdd: el => menuSheet(el.dataset.t),
+  batchHide: el => { batchIgnore.push(el.dataset.t); store.set('batchIgnore', batchIgnore); renderKeep(); },
   newWeek: () => {
     if (S.confirm !== 'week') { S.confirm = 'week'; renderKeep(); setTimeout(() => { if (S.confirm === 'week') { S.confirm = null; renderKeep(); } }, 4000); return; }
-    S.confirm = null; menu = []; produits = []; coches = [];
+    S.confirm = null; menu = []; produits = []; coches = []; batchIgnore = []; store.set('batchIgnore', batchIgnore);
     store.set('menu', menu); store.set('produits', produits); store.set('coches', coches); renderKeep();
   },
   share: async () => {

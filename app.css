@@ -187,3 +187,12 @@ body.paso #timers{bottom:calc(84px + var(--bottom))}
 .alldone{color:var(--ok);font-weight:600;padding:8px 0}
 details.panier summary{color:var(--ok);font-weight:600}
 details.panier li .txt{color:var(--muted)}
+
+.batch{margin-top:14px;background:#f4f8f1;border:1px solid #d6e5cc;border-radius:12px;padding:10px 12px}
+.batch-h{font-weight:700;font-size:14px;color:#3d5c2e;margin-bottom:4px}
+.batch-i{display:flex;align-items:center;gap:8px;padding:8px 0;border-top:1px solid #dfe9d8}
+.batch-i:first-of-type{border-top:none}
+.batch-i .name{flex:1;min-width:0;cursor:pointer;font-size:14.5px}
+.batch-i .name small{display:block;color:var(--muted);font-size:12.5px;margin-top:1px}
+.batch-i .go{border:none;background:#4f7a4a;color:#fff;border-radius:10px;padding:7px 10px;font-size:13px;font-weight:600;flex:none}
+section > .batch{margin-top:0}
