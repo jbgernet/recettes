@@ -1,7 +1,7 @@
 // Service worker : permet d'ouvrir l'app sans connexion (dernière version connue).
 // Les recettes elles-mêmes sont gardées par l'app sur le téléphone.
-const CACHE = 'recettes-v3';
-const FILES = ['./', 'index.html', 'app.css?v=3', 'app.js?v=3', 'config.js?v=3', 'manifest.webmanifest',
+const CACHE = 'recettes-v4';
+const FILES = ['./', 'index.html', 'app.css?v=4', 'app.js?v=4', 'config.js?v=4', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'];
 
 self.addEventListener('install', e => {

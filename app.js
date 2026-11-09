@@ -34,6 +34,7 @@ const $ = id => document.getElementById(id);
 const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[’]/g, "'").trim();
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const num = s => { const n = parseFloat(String(s == null ? '' : s).replace(',', '.')); return isNaN(n) ? null : n; };
+const plat = s => norm(s).replace(/[^a-z0-9]+/g, ' ').trim();   // recherche sans accents ni ponctuation
 const uid = () => Math.random().toString(36).slice(2, 10);
 const rec = t => DATA && DATA.recettes.find(r => r.titre === t);
 const isAdmin = () => profil.role === 'admin';
@@ -264,7 +265,7 @@ function go(view, opts) {
     S.done = {}; S.avisDirty = false; S.comNote = 0;
   }
   if (opts.push !== false) history.pushState({ view, titre: opts.titre || null }, '');
-  render(); window.scrollTo(0, 0); wake();
+  render(); $('app').scrollTop = 0; wake();
   if (view === 'list' || view === 'courses') refresh();
 }
 window.addEventListener('popstate', e => {
@@ -288,9 +289,26 @@ function render() {
   ({ list: renderList, recipe: renderRecipe, add: renderAdd, courses: renderCourses, moi: renderMoi })[S.view]();
   renderTimers();
 }
-function renderKeep() { const y = window.scrollY; render(); window.scrollTo(0, y); }
+function renderKeep() { const y = $('app').scrollTop; render(); $('app').scrollTop = y; }
 
 /* ---------- Liste des recettes ---------- */
+// Nom court du livre ou de la source : « Yummix », « Whoogy's », « One Pot », « NYT Cooking »…
+function livreDe(r) {
+  const s = String(r.source || '').trim();
+  if (!s) return '';
+  let m = s.match(/^(?:livre|application|site)?\s*«\s*([^»]+?)\s*»/i);
+  if (m) return m[1];
+  const premier = s.split(',')[0].trim();
+  if (/^(livre|application|site)$/i.test(premier)) return '';
+  m = premier.match(/\(([^)]+)\)/);
+  if (m && !/^(livre|de .*)$/i.test(m[1].trim())) return m[1].trim();
+  return premier.replace(/\(.*?\)/g, '').replace(/\bp\.\s*\d+.*$/, '').trim();
+}
+function sourcesListe() {
+  const c = {};
+  DATA.recettes.forEach(r => { if (r.statut === A_VALIDER) return; const l = livreDe(r); if (l) c[l] = (c[l] || 0) + 1; });
+  return Object.keys(c).filter(k => c[k] >= 2).sort((a, b) => c[b] - c[a] || a.localeCompare(b, 'fr')).map(k => [k, c[k]]);
+}
 function allTypes() {
   const c = {};
   DATA.recettes.forEach(r => r.types.forEach(t => c[t] = (c[t] || 0) + 1));
@@ -299,8 +317,9 @@ function allTypes() {
 const comsDe = t => DATA.commentaires.filter(c => c.titre === t);
 
 function recettesFiltrees() {
-  const q = norm(S.q).split(/\s+/).filter(Boolean);
+  const q = plat(S.q).split(/\s+/).filter(Boolean);
   return DATA.recettes.filter(r => {
+    if (S.source && livreDe(r) !== S.source) return false;
     if (S.filtre === 'valider') { if (r.statut !== A_VALIDER) return false; }
     else if (r.statut === A_VALIDER) return false;
     if (S.filtre === 'fav' && !perso.fav.includes(r.titre)) return false;
@@ -308,8 +327,9 @@ function recettesFiltrees() {
     if (S.type && !r.types.includes(S.type)) return false;
     if (!q.length || S.frigo) return true;
     const ings = (DATA.ingredients[r.titre] || []).map(i => i.n).join(' ');
-    const hay = norm([r.titre, r.aliments.join(' '), r.types.join(' '), ings, r.source].join(' '));
-    return q.every(w => hay.includes(w));
+    const hay = plat([r.titre, r.aliments.join(' '), r.types.join(' '), ings, r.source, r.typeSource].join(' '));
+    const hayColle = hay.replace(/ /g, '');
+    return q.every(w => hay.includes(w) || hayColle.includes(w));
   });
 }
 
@@ -340,6 +360,7 @@ function cardHtml(r, extra) {
   return `<div class="card ${r.statut === A_VALIDER ? 'pending' : ''}" data-act="open" data-t="${esc(r.titre)}">
     <h2>${esc(r.titre)}</h2>
     <div class="meta">${r.statut === A_VALIDER ? '<b style="color:var(--accent)">À valider</b> · proposée par ' + esc(r.par) + ' · ' : ''}${stars(r.note)} ${esc(r.types.slice(0, 3).join(' · '))}${saisonsCourt(r) ? ' · <span class="ssn">' + esc(saisonsCourt(r)) + '</span>' : ''}<span class="icons">${icons ? ' · ' + icons : ''}</span></div>
+    ${(S.q || S.source) && livreDe(r) ? `<div class="meta">📚 ${esc(livreDe(r))}</div>` : ''}
     ${extra || ''}</div>`;
 }
 
@@ -376,12 +397,16 @@ function renderList() {
       <h1>Carnet de recettes</h1>
       ${S.frigo
         ? `<input id="frigoQ" class="field" type="search" placeholder="Ce que j'ai : poireau, crème, lardons…" value="${esc(S.frigoQ)}" autocomplete="off">`
-        : `<input id="q" class="field" type="search" placeholder="Rechercher un plat, un ingrédient…" value="${esc(S.q)}" autocomplete="off">`}
+        : `<input id="q" class="field" type="search" placeholder="Plat, ingrédient, livre (Yummix, Whoogy's…)" value="${esc(S.q)}" autocomplete="off">`}
       <div class="seg">
         ${filtres.map(([k, l]) => `<button data-act="filtre" data-k="${k}" class="${S.filtre === k ? 'on' : ''} ${k === 'valider' ? 'warn' : ''}">${l}</button>`).join('')}
         <button data-act="frigo" class="${S.frigo ? 'on' : ''}">🧺 Avec ce que j'ai</button>
       </div>
       <div class="chips">
+        <label class="chip srcchip ${S.source ? 'on' : ''}">📚 <select id="srcSel" aria-label="Filtrer par livre ou source">
+          <option value="">Livre / source</option>
+          ${sourcesListe().map(([s, n]) => `<option value="${esc(s)}" ${S.source === s ? 'selected' : ''}>${esc(s)} (${n})</option>`).join('')}
+        </select></label>
         <button class="chip ${S.type ? '' : 'on'}" data-act="type" data-t="">Tout</button>
         ${allTypes().map(t => `<button class="chip ${S.type === t ? 'on' : ''}" data-act="type" data-t="${esc(t)}">${esc(t)}</button>`).join('')}
       </div>
@@ -408,6 +433,7 @@ function renderList() {
     const i2 = $('q') || $('frigoQ'); i2.focus(); try { i2.setSelectionRange(pos, pos); } catch (e) {}
   };
   if ($('sort')) $('sort').onchange = e => { S.sort = e.target.value; renderList(); };
+  if ($('srcSel')) $('srcSel').onchange = e => { S.source = e.target.value; renderList(); };
 }
 
 /* ---------- Minuteurs dans les étapes ---------- */
@@ -719,7 +745,7 @@ function renderCourses() {
 
   $('app').innerHTML = `
     <header><h1>Menu & courses</h1>
-      <div class="meta">${total ? restants + ' article' + (restants > 1 ? 's' : '') + ' à acheter sur ' + total : 'Liste vide'} · enregistrée sur ce téléphone</div>
+      <div class="meta">${total ? `<b class="reste">${restants} article${restants > 1 ? 's' : ''} à acheter</b> sur ${total}` : 'Liste vide'} · enregistrée sur ce téléphone</div>
     </header>
     <main>
       <section>
@@ -752,10 +778,13 @@ function renderCourses() {
       ${total || maison.length ? `
       <section>
         <h3>À acheter ${total ? `<button class="tog" data-act="share">📤 Partager</button>` : ''}</h3>
-        ${groups.map(g => `<div class="rayon">${esc(g.rayon)}</div>
-          <ul class="ing">${g.items.map(it => `<li data-act="ck" data-k="${esc(it.k)}" class="${set.has(it.k) ? 'done' : ''}"><span class="box"></span>
+        ${restants ? groups.filter(g => g.items.some(i => !set.has(i.k))).map(g => `<div class="rayon">${esc(g.rayon)}</div>
+          <ul class="ing">${g.items.filter(i => !set.has(i.k)).map(it => `<li data-act="ck" data-k="${esc(it.k)}"><span class="box"></span>
               <span class="txt">${itemLine(it)}${plusieurs && it.de.length ? `<span class="from">${esc(it.de.join(' · '))}</span>` : ''}</span>
-              ${it.de.length ? `<button class="home" data-act="stockAdd" data-n="${esc(it.nom)}" title="Toujours à la maison">🏠</button>` : ''}</li>`).join('')}</ul>`).join('')}
+              ${it.de.length ? `<button class="home" data-act="stockAdd" data-n="${esc(it.nom)}" title="Toujours à la maison">🏠</button>` : ''}</li>`).join('')}</ul>`).join('')
+          : (total ? '<div class="alldone">✓ Tout est dans le panier !</div>' : '')}
+        ${total - restants ? `<details class="stock panier" ${S.panierOuvert ? 'open' : ''}><summary>✓ Dans le panier (${total - restants})</summary>
+          <ul class="ing">${groups.flatMap(g => g.items.filter(i => set.has(i.k))).map(it => `<li data-act="ck" data-k="${esc(it.k)}" class="done"><span class="box"></span><span class="txt">${itemLine(it)}</span></li>`).join('')}</ul></details>` : ''}
         <div class="hint" style="margin-top:10px">🏠 = toujours à la maison : l'article ne sera plus proposé.</div>
         ${maison.length ? `<details class="stock"><summary>Déjà à la maison (${maison.length})</summary>
           <ul class="ing">${maison.map(it => `<li><span class="txt">${itemLine(it)}</span><button class="tog" data-act="stockDel" data-n="${esc(it.nom)}">À acheter</button></li>`).join('')}</ul></details>` : ''}
@@ -1112,6 +1141,7 @@ document.addEventListener('change', e => {
     const m = menu.find(x => x.id === el.dataset.id); m.jour = el.value; store.set('menu', menu); renderKeep();
   }
 });
+document.addEventListener('toggle', e => { if (e.target.classList && e.target.classList.contains('panier')) S.panierOuvert = e.target.open; }, true);
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') { wake(); renderTimers(); if (DATA) refresh(); }
 });
