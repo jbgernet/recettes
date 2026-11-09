@@ -15,9 +15,10 @@ const SPREADSHEET_ID = '1FLfsatHQr4wwzNCLAqnWh9dE6bwDSxVsFyIWarmvc1w';
 const C = {
   titre: 1, typeSource: 2, source: 3, lien: 4, portions: 5, unitePortions: 6,
   types: 7, aliments: 8, note: 9, premiere: 10, commentaires: 11, etapes: 12,
-  origine: 13, photos: 14, ajoutee: 15, statut: 16, par: 17
+  origine: 13, photos: 14, ajoutee: 15, statut: 16, par: 17, saisons: 18
 };
-const NB_COL = 17;
+const NB_COL = 18;
+const SAISONS = ['Printemps', 'Été', 'Automne', 'Hiver'];
 const A_VALIDER = 'À valider';
 const ONGLET_COMMENTAIRES = 'Commentaires';
 
@@ -110,7 +111,8 @@ function getData_(role) {
       types: splitList_(r[6]), aliments: splitList_(r[7]),
       note: r[8], premiere: r[9], commentaires: r[10],
       etapes: r[11], origine: r[12], photos: r[13], ajoutee: r[14],
-      statut: String(r[15] || '').trim(), par: String(r[16] || '').trim()
+      statut: String(r[15] || '').trim(), par: String(r[16] || '').trim(),
+      saisons: String(r[17] || '').trim()
     }))
     .filter(r => role === 'admin' || r.statut !== A_VALIDER);
 
@@ -196,7 +198,7 @@ function addRecette_(req) {
     const ss = ss_();
     const sh = ss.getSheetByName('Recettes');
     if (findRecette_(sh, titre) > 0) throw new Error('Une recette porte déjà ce titre : changez-le légèrement.');
-    if (!sh.getRange(1, C.statut).getDisplayValue()) sh.getRange(1, C.statut, 1, 2).setValues([['Statut', 'Ajoutée par']]);
+    if (!sh.getRange(1, C.saisons).getDisplayValue()) sh.getRange(1, C.statut, 1, 3).setValues([['Statut', 'Ajoutée par', 'Saisons']]);
 
     const portions = parseInt(r.portions, 10);
     const ligne = new Array(NB_COL).fill('');
@@ -213,6 +215,7 @@ function addRecette_(req) {
     ligne[C.ajoutee - 1] = dateFr_();
     ligne[C.statut - 1] = role === 'admin' ? '' : A_VALIDER;
     ligne[C.par - 1] = auteur;
+    ligne[C.saisons - 1] = saisonsTexte_(r.saisons);
     const row = lastRowA_(sh) + 1;
     ensureRows_(sh, row);
     sh.getRange(row, 1, 1, NB_COL).setValues([ligne]);
@@ -327,6 +330,14 @@ function deleteRecette_(req) {
     }
     return { titre: req.titre };
   });
+}
+
+// « Toutes saisons » si les quatre sont cochées, sinon la liste dans l'ordre de l'année
+function saisonsTexte_(list) {
+  const set = new Set((Array.isArray(list) ? list : String(list || '').split(','))
+    .map(s => String(s).trim()).filter(s => SAISONS.includes(s) || s === 'Toutes saisons'));
+  if (set.has('Toutes saisons') || SAISONS.every(s => set.has(s))) return 'Toutes saisons';
+  return SAISONS.filter(s => set.has(s)).join(', ');
 }
 
 function splitList_(s) {

@@ -113,6 +113,59 @@ function ligne(ing, ratio) {
 }
 const stars = (n, cls) => { n = Math.round(num(n) || 0); return n ? '<span class="stars ' + (cls || '') + '">' + '★'.repeat(n) + '☆'.repeat(Math.max(0, 5 - n)) + '</span>' : ''; };
 
+/* ---------- Saisons ---------- */
+const SAISONS = [['Printemps', '🌸'], ['Été', '☀️'], ['Automne', '🍂'], ['Hiver', '❄️']];
+const NOMS_SAISONS = SAISONS.map(x => x[0]);
+function saisonsDe(r) {
+  const s = norm(r && r.saisons);
+  if (!s) return [];
+  if (s.includes('toute')) return NOMS_SAISONS.slice();
+  return NOMS_SAISONS.filter(x => s.includes(norm(x)));
+}
+function saisonActuelle() {
+  const m = new Date().getMonth();
+  return m >= 2 && m <= 4 ? 'Printemps' : m >= 5 && m <= 7 ? 'Été' : m >= 8 && m <= 10 ? 'Automne' : 'Hiver';
+}
+const emoji = s => (SAISONS.find(x => x[0] === s) || [])[1] || '';
+function saisonsCourt(r) {
+  const l = saisonsDe(r);
+  if (!l.length) return '';
+  return l.length === 4 ? 'Toutes saisons' : l.map(emoji).join('');
+}
+function saisonsTexte(list) {
+  if (list.includes('Toutes saisons') || NOMS_SAISONS.every(s => list.includes(s))) return 'Toutes saisons';
+  return NOMS_SAISONS.filter(s => list.includes(s)).join(', ');
+}
+
+// Produits de saison (France, Belgique) : sert à proposer les saisons d'une recette saisie à la main
+const P = 'Printemps', E = 'Été', A = 'Automne', H = 'Hiver';
+const SAISON_PRODUITS = [
+  [['asperge', 'petit pois', 'petits pois', 'feve', 'radis', 'rhubarbe', 'ail des ours', 'oignon nouveau', 'cresson', 'morille'], [P]],
+  [['fraise', 'artichaut'], [P, E]],
+  [['epinard', 'pousse d\'epinard'], [P, A]],
+  [['tomate', 'tomate cerise', 'courgette', 'aubergine', 'poivron', 'concombre', 'haricot vert', 'mais', 'melon', 'pasteque', 'peche', 'abricot', 'nectarine', 'cerise', 'framboise', 'myrtille', 'groseille', 'cassis', 'mure', 'basilic', 'mirabelle', 'fleur de courgette'], [E]],
+  [['figue', 'prune', 'quetsche', 'blette', 'fenouil', 'brocoli', 'girolle'], [E, A]],
+  [['potiron', 'citrouille', 'champignon', 'cepe', 'raisin', 'coing', 'noix', 'kaki', 'noisette fraiche'], [A]],
+  [['courge', 'butternut', 'potimarron', 'chataigne', 'marron', 'poire', 'pomme', 'betterave', 'panais', 'topinambour', 'celeri-rave', 'celeri rave', 'chou', 'chou-fleur', 'chou de bruxelles', 'choux de bruxelles', 'chou rouge', 'chou kale', 'kale', 'poireau', 'radicchio', 'chicoree', 'endive', 'patate douce', 'navet', 'grenade', 'canneberge'], [A, H]],
+  [['rutabaga', 'salsifis', 'mache', 'orange', 'clementine', 'mandarine', 'pamplemousse', 'kiwi', 'cardon', 'crosne'], [H]]
+];
+const HORS_SAISON = /(conserve|boite|surgel|seche|concentre|coulis|passata|sauce tomate|puree de tomate|confiture|compote|jus|sirop|en poudre|deshydrat|pomme de terre|pommes de terre|noix de coco|noix de cajou|noix de muscade|noix de pecan|lait de coco|fleur d'oranger|zeste)/;
+function suggestionSaisons(ings) {
+  const score = { [P]: 0, [E]: 0, [A]: 0, [H]: 0 };
+  const vus = [];
+  ings.forEach(i => {
+    const n = norm(i.n);
+    if (!n || HORS_SAISON.test(n) || norm(i.u) === 'boite') return;
+    for (const [mots, saisons] of SAISON_PRODUITS) {
+      const m = mots.find(w => new RegExp('(^|[^a-z])' + w.replace(/[-]/g, '\\-') + '(s|x)?($|[^a-z])').test(n));
+      if (m) { saisons.forEach(s => score[s] += 1 / saisons.length); vus.push(i.n); break; }
+    }
+  });
+  const max = Math.max(...Object.values(score));
+  if (!max) return { saisons: [], vus };
+  return { saisons: NOMS_SAISONS.filter(s => score[s] >= max * 0.6), vus };
+}
+
 /* ---------- Analyse d'une liste d'ingrédients collée (sans IA) ---------- */
 const UNITES = [
   ['c. à soupe', ['cuilleres a soupe', 'cuillere a soupe', 'cuil. a soupe', 'c. a soupe', 'c.a soupe', 'c a soupe', 'cas', 'c.s.', 'cs', 'tbsp']],
@@ -286,18 +339,22 @@ function cardHtml(r, extra) {
     menu.some(m => m.titre === r.titre) ? '🛒' : '', nb ? '💬' + nb : ''].filter(Boolean).join(' ');
   return `<div class="card ${r.statut === A_VALIDER ? 'pending' : ''}" data-act="open" data-t="${esc(r.titre)}">
     <h2>${esc(r.titre)}</h2>
-    <div class="meta">${r.statut === A_VALIDER ? '<b style="color:var(--accent)">À valider</b> · proposée par ' + esc(r.par) + ' · ' : ''}${stars(r.note)} ${esc(r.types.slice(0, 3).join(' · '))}<span class="icons">${icons ? ' · ' + icons : ''}</span></div>
+    <div class="meta">${r.statut === A_VALIDER ? '<b style="color:var(--accent)">À valider</b> · proposée par ' + esc(r.par) + ' · ' : ''}${stars(r.note)} ${esc(r.types.slice(0, 3).join(' · '))}${saisonsCourt(r) ? ' · <span class="ssn">' + esc(saisonsCourt(r)) + '</span>' : ''}<span class="icons">${icons ? ' · ' + icons : ''}</span></div>
     ${extra || ''}</div>`;
 }
 
 function renderList() {
   let list = recettesFiltrees();
-  const cmp = {
-    az: (a, b) => a.titre.localeCompare(b.titre, 'fr'),
+  const az = (a, b) => a.titre.localeCompare(b.titre, 'fr');
+  if (S.sort.startsWith('saison:')) {
+    const s = S.sort.slice(7);
+    const rang = r => { const l = saisonsDe(r); return l.includes(s) ? 0 : l.length ? 2 : 1; };
+    list.sort((a, b) => rang(a) - rang(b) || az(a, b));
+  } else list.sort({
+    az,
     recent: (a, b) => parseDate(b.ajoutee) - parseDate(a.ajoutee),
-    note: (a, b) => (num(b.note) || 0) - (num(a.note) || 0) || a.titre.localeCompare(b.titre, 'fr')
-  }[S.sort];
-  list.sort(cmp);
+    note: (a, b) => (num(b.note) || 0) - (num(a.note) || 0) || az(a, b)
+  }[S.sort] || az);
   const fr = S.frigo ? frigoClasse(list) : null;
   const nbValider = isAdmin() ? DATA.recettes.filter(r => r.statut === A_VALIDER).length : 0;
   const filtres = [['toutes', 'Toutes'], ['fav', '♥ Favoris'], ['tester', '🔖 À tester']];
@@ -336,6 +393,7 @@ function renderList() {
         <option value="az" ${S.sort === 'az' ? 'selected' : ''}>A → Z</option>
         <option value="recent" ${S.sort === 'recent' ? 'selected' : ''}>Plus récentes</option>
         <option value="note" ${S.sort === 'note' ? 'selected' : ''}>Mieux notées</option>
+        ${SAISONS.map(([s, e]) => `<option value="saison:${s}" ${S.sort === 'saison:' + s ? 'selected' : ''}>${e} ${s} d'abord${s === saisonActuelle() ? ' (maintenant)' : ''}</option>`).join('')}
       </select>
     </div>`}
     <main>
@@ -397,7 +455,7 @@ function renderRecipe() {
       <h1>${esc(r.titre)}</h1>
       <div class="meta">${stars(r.note)} ${esc([[r.typeSource, r.source].filter(Boolean).join(' – '), r.par ? 'ajoutée par ' + r.par : ''].filter(Boolean).join(' · '))}</div>
       ${moy ? `<div class="meta">Proches : ${stars(moy, 'blue')} (${notesProches.length})</div>` : ''}
-      <div class="tags">${r.types.map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div>
+      <div class="tags">${saisonsDe(r).length === 4 ? '<span class="tag ssn">🗓 Toutes saisons</span>' : saisonsDe(r).map(s => `<span class="tag ssn">${emoji(s)} ${s}</span>`).join('')}${r.types.map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div>
       <div class="toggles">
         <button class="tog ${perso.fav.includes(r.titre) ? 'on' : ''}" data-act="perso" data-k="fav">♥ Favori</button>
         <button class="tog ${perso.tester.includes(r.titre) ? 'on' : ''}" data-act="perso" data-k="tester">🔖 À tester</button>
@@ -723,7 +781,7 @@ function shareText() {
 
 /* ---------- Ajouter une recette ---------- */
 function blankForm() {
-  return { titre: '', typeSource: '', source: '', lien: '', portions: '4', unitePortions: 'personnes', types: [], aliments: '', ingredients: '', etapes: '', origine: '' };
+  return { titre: '', typeSource: '', source: '', lien: '', portions: '4', unitePortions: 'personnes', types: [], saisons: [], saisonsAuto: true, aliments: '', ingredients: '', etapes: '', origine: '' };
 }
 function renderAdd() {
   if (!canWrite()) {
@@ -736,6 +794,7 @@ function renderAdd() {
     return;
   }
   const f = brouillon || (brouillon = blankForm());
+  if (!Array.isArray(f.saisons)) { f.saisons = []; f.saisonsAuto = true; }
   $('app').innerHTML = `
     <header><h1>Ajouter une recette</h1>
       <div class="meta">${isAdmin() ? 'Elle sera publiée directement.' : 'Elle sera visible par tous après validation par ' + esc(OWNER) + '.'}</div></header>
@@ -755,6 +814,10 @@ function renderAdd() {
         <textarea class="field" data-f="ingredients" rows="7" placeholder="250 g de lentilles corail&#10;2 gousses d'ail&#10;1 c. à soupe d'huile d'olive&#10;3 carottes&#10;sel, poivre">${esc(f.ingredients)}</textarea>
         <div class="hint">Vous pouvez coller la liste telle quelle : quantités et unités sont reconnues automatiquement. Vérifiez l'aperçu.</div>
         <div id="preview"></div>
+      </section>
+      <section>
+        <label class="lbl">Saisons</label>
+        <div id="saisonsBox"></div>
       </section>
       <section>
         <label class="lbl">Préparation * (une étape par ligne)</label>
@@ -778,9 +841,23 @@ function renderAdd() {
     </main>`;
   document.querySelectorAll('[data-f]').forEach(el => {
     const ev = el.tagName === 'SELECT' ? 'onchange' : 'oninput';
-    el[ev] = () => { brouillon[el.dataset.f] = el.value; store.set('brouillon', brouillon); if (el.dataset.f === 'ingredients') renderPreview(); };
+    el[ev] = () => { brouillon[el.dataset.f] = el.value; store.set('brouillon', brouillon); if (el.dataset.f === 'ingredients') { renderPreview(); renderSaisonsForm(); } };
   });
-  renderPreview();
+  renderPreview(); renderSaisonsForm();
+}
+function renderSaisonsForm() {
+  const box = $('saisonsBox'); if (!box) return;
+  const f = brouillon, sug = suggestionSaisons(parsedIngredients());
+  if (f.saisonsAuto) { f.saisons = sug.saisons.slice(); store.set('brouillon', f); }
+  const toutes = NOMS_SAISONS.every(s => f.saisons.includes(s));
+  box.innerHTML = `
+    <div class="chips wrap" style="padding-top:0">
+      ${SAISONS.map(([s, e]) => `<button class="chip ${f.saisons.includes(s) ? 'on' : ''}" data-act="fSaison" data-s="${s}">${e} ${s}</button>`).join('')}
+      <button class="chip ${toutes ? 'on' : ''}" data-act="fSaison" data-s="toutes">🗓 Toutes saisons</button>
+    </div>
+    <div class="hint">${f.saisonsAuto
+      ? (sug.saisons.length ? '💡 Proposition d\'après les ingrédients (' + esc(sug.vus.slice(0, 4).join(', ')) + ') : vérifiez ou corrigez.' : 'Pas de proposition automatique : aucun ingrédient de saison reconnu. Choisissez, ou laissez vide.')
+      : 'Si la recette indique une saison, reprenez-la.'}</div>`;
 }
 function parsedIngredients() {
   return String((brouillon || {}).ingredients || '').split('\n').map(parseIngredientLine).filter(Boolean);
@@ -801,7 +878,7 @@ async function submitRecette() {
   const aliments = f.aliments.trim() || ingredients.filter(i => !enStock(i.n)).slice(0, 5).map(i => i.n.replace(/\(.*?\)/g, '').trim()).join(', ');
   S.busy = true; renderKeep();
   try {
-    const res = await api('addRecette', { recette: Object.assign({}, f, { titre: f.titre.trim(), ingredients, etapes, aliments }) });
+    const res = await api('addRecette', { recette: Object.assign({}, f, { titre: f.titre.trim(), ingredients, etapes, aliments, saisons: saisonsTexte(f.saisons || []) }) });
     brouillon = null; store.set('brouillon', null);
     if (res.statut === A_VALIDER) {
       propositions.push({ titre: res.titre, date: dateFr() }); store.set('propositions', propositions);
@@ -983,6 +1060,13 @@ const ACT = {
     try { if (navigator.share) { await navigator.share({ title: 'Liste de courses', text }); return; } } catch (e) { if (e.name === 'AbortError') return; }
     try { await navigator.clipboard.writeText(text); toast('Liste copiée : collez-la dans un message.'); }
     catch (e) { window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank'); }
+  },
+  fSaison: el => {
+    const s = el.dataset.s, f = brouillon;
+    f.saisonsAuto = false;
+    if (s === 'toutes') f.saisons = NOMS_SAISONS.every(x => f.saisons.includes(x)) ? [] : NOMS_SAISONS.slice();
+    else f.saisons = f.saisons.includes(s) ? f.saisons.filter(x => x !== s) : f.saisons.concat(s);
+    store.set('brouillon', f); renderSaisonsForm();
   },
   fType: el => { const t = el.dataset.t; brouillon.types = brouillon.types.includes(t) ? brouillon.types.filter(x => x !== t) : brouillon.types.concat(t); store.set('brouillon', brouillon); el.classList.toggle('on'); },
   submitRecette: () => submitRecette(),
