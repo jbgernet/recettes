@@ -195,4 +195,4 @@ details.panier li .txt{color:var(--muted)}
 .batch-i .name{flex:1;min-width:0;cursor:pointer;font-size:14.5px}
 .batch-i .name small{display:block;color:var(--muted);font-size:12.5px;margin-top:1px}
 .batch-i .go{border:none;background:#4f7a4a;color:#fff;border-radius:10px;padding:7px 10px;font-size:13px;font-weight:600;flex:none}
-section > .batch{margin-top:0}
+section > .batch{margin-top:20px}
