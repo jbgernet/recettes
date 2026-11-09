@@ -389,12 +389,12 @@ function renderList() {
     ${S.frigo ? '<div class="bar"><span>Classées par nombre d\'ingrédients manquants (hors « toujours à la maison »)</span></div>' : `
     <div class="bar">
       <span>${list.length} recette${list.length > 1 ? 's' : ''}</span>
-      <select id="sort">
+      <label class="sortbox">↕ Trier<select id="sort" aria-label="Trier les recettes">
         <option value="az" ${S.sort === 'az' ? 'selected' : ''}>A → Z</option>
         <option value="recent" ${S.sort === 'recent' ? 'selected' : ''}>Plus récentes</option>
         <option value="note" ${S.sort === 'note' ? 'selected' : ''}>Mieux notées</option>
-        ${SAISONS.map(([s, e]) => `<option value="saison:${s}" ${S.sort === 'saison:' + s ? 'selected' : ''}>${e} ${s} d'abord${s === saisonActuelle() ? ' (maintenant)' : ''}</option>`).join('')}
-      </select>
+        ${SAISONS.map(([s, e]) => `<option value="saison:${s}" ${S.sort === 'saison:' + s ? 'selected' : ''}>${e} ${s}${s === saisonActuelle() ? ' (maintenant)' : ' d\'abord'}</option>`).join('')}
+      </select></label>
     </div>`}
     <main>
       ${propositions.length && S.filtre === 'toutes' && !S.frigo ? `<div class="hint" style="padding:4px 4px 0">⏳ ${propositions.length} recette${propositions.length > 1 ? 's' : ''} proposée${propositions.length > 1 ? 's' : ''} en attente de validation par ${esc(OWNER)}.</div>` : ''}
