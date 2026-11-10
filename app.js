@@ -1421,6 +1421,22 @@ let deferredPrompt = null;
 window.addEventListener('pagehide', saveCuisine);
 window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferredPrompt = e; if (S.view === 'moi') renderKeep(); });
 
+/* ---------- Mise à jour automatique de l'app ---------- */
+const APP_V = +(((document.querySelector('script[src*="app.js"]') || {}).src || '').match(/v=(\d+)/) || [])[1] || 0;
+let majEnAttente = false;
+async function verifierMaj() {
+  try {
+    const t = await (await fetch('index.html?maj=' + Date.now(), { cache: 'no-store' })).text();
+    const v = +((t.match(/app\.js\?v=(\d+)/) || [])[1] || 0);
+    if (!APP_V || v <= APP_V) return;
+    majEnAttente = true;
+    if (!isBusy() && !S.pas) location.reload();
+    else toast('Nouvelle version de l\'app : elle s\'installera à la prochaine ouverture.', 5000);
+  } catch (e) {}
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') verifierMaj(); });
+setTimeout(verifierMaj, 3000);
+
 /* ---------- Démarrage ---------- */
 history.replaceState({ view: 'list' }, '');
 if (DATA) { render(); restaurerCuisine(); }

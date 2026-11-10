@@ -1,7 +1,7 @@
 // Service worker : permet d'ouvrir l'app sans connexion (dernière version connue).
 // Les recettes elles-mêmes sont gardées par l'app sur le téléphone.
-const CACHE = 'recettes-v11';
-const FILES = ['./', 'index.html', 'app.css?v=11', 'app.js?v=11', 'config.js?v=11', 'manifest.webmanifest',
+const CACHE = 'recettes-v12';
+const FILES = ['./', 'index.html', 'app.css?v=12', 'app.js?v=12', 'config.js?v=12', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'];
 
 self.addEventListener('install', e => {
@@ -15,7 +15,7 @@ self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET' || url.origin !== location.origin) return;
   e.respondWith(
-    fetch(e.request).then(res => {
+    fetch(e.request.url, { cache: 'no-cache', credentials: 'same-origin' }).then(res => {   // toujours revérifier auprès de GitHub
       const copy = res.clone();
       caches.open(CACHE).then(c => c.put(e.request, copy));
       return res;
