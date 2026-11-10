@@ -711,7 +711,7 @@ function nomCourt(nom) {
 // Même nettoyage, mais en gardant les accents pour l'affichage
 const MOTS_TETE = ['de', "d'", 'du', 'des', 'la', 'le', 'les', "l'", 'petit', 'petite', 'gros', 'grosse', 'grand', 'beau', 'belle', 'cm', 'bouquet', 'brin', 'brins', 'branche', 'branches', 'feuille', 'feuilles', 'pincee', 'tranche', 'tranches', 'gousse', 'gousses', 'filet', 'botte', 'poignee', 'morceau', 'morceaux', 'zeste', 'jus', 'boule', 'bloc', 'tete', 'pot', 'sachet', 'boite'];
 function nomAffiche(nom) {
-  const s = String(nom).toLowerCase().replace(/\(.*?\)/g, ' ').split(/[,;:]| ou /)[0];
+  const s = String(nom).toLowerCase().replace(/\(.*?\)/g, ' ').split(/[,;:+]| ou /)[0].replace(/\bde (petite|grosse|moyenne) taille\b/, '');
   let mots = s.split(/\s+/).filter(Boolean).filter(w => !norm(w).replace(QUALIFS, '').trim() === false || norm(w).replace(QUALIFS, '').trim());
   while (mots.length > 1 && MOTS_TETE.includes(norm(mots[0]))) mots.shift();
   if (mots.length && /^(d'|l')/.test(norm(mots[0])) && mots[0].length > 2) mots[0] = mots[0].slice(2);
@@ -752,33 +752,93 @@ function profilBatch(r) {
   const temp = mt && mt[1];
   return (profils[r.titre] = { src: r.etapes, ings, proc, temp: temp ? +temp : null });
 }
+// Analyse « Batch cooking » faite par Claude dans le Sheet (colonne S), une ligne par préparation :
+// « four 200 °C, 30 min : butternut », « vapeur 20 min : … », « base : sauce tomate », « céréale : riz », « découpe : oignon, carottes »…
+const TYPES_PREP = [['four', 'four'], ['vapeur', 'vapeur'], ['eau bouillante', 'eau'], ['cereale', 'cereale'], ['base', 'base'], ['decoupe', 'decoupe'], ['mijote', 'mijote'], ['garde', 'garde']];
+const SYN_BASE = { 'pate a tarte': 'pate brisee', 'sauce tomate marinara': 'sauce tomate', 'marinara': 'sauce tomate' };
+function prepsDe(r) {
+  const t = (r.x && r.x['Batch cooking']) || '';
+  return t.split('\n').map(l => l.trim()).filter(Boolean).map(l => {
+    const i = l.indexOf(':');
+    const head = i >= 0 ? l.slice(0, i).trim() : l, quoi = i >= 0 ? l.slice(i + 1).trim() : '';
+    const nh = norm(head), tp = TYPES_PREP.find(([k]) => nh.startsWith(k));
+    if (!tp) return null;
+    const temp = (nh.match(/(\d{2,3})\s*°?\s*c\b/) || [])[1];
+    let cle = norm(quoi).replace(/\(.*?\)/g, '').replace(/[^a-z' -]/g, ' ').replace(/\s+/g, ' ').trim();
+    cle = SYN_BASE[cle] || cle;
+    return { type: tp[1], quoi, temp: temp ? +temp : null, cle, items: quoi.split(/,| et | ou /).map(x => cleIngredient(x)).filter(Boolean) };
+  }).filter(Boolean);
+}
+const court = s => String(s).replace(/\s*\(.*?\)/g, '');
+function liensPreps(pa, pb) {
+  const best = {};
+  const garder = (type, pts, txt) => { if (!best[type] || best[type].pts < pts) best[type] = { pts, txt }; };
+  pa.forEach(a => pb.forEach(b => {
+    if (a.type !== b.type) return;
+    if (a.type === 'four') {
+      if (a.temp && b.temp && Math.abs(a.temp - b.temp) <= 10) garder('four', 3, `même four ${b.temp} °C : ${court(a.quoi)} + ${court(b.quoi)}`);
+      else if (a.temp && b.temp && Math.abs(a.temp - b.temp) <= 25) garder('four', 1.2, `four ${a.temp} et ${b.temp} °C : à enchaîner`);
+      else garder('four', 0.6, 'four');
+    } else if (a.type === 'vapeur') garder('vapeur', 2, `vapeur en même temps : ${court(a.quoi)} + ${court(b.quoi)}`);
+    else if (a.type === 'eau') garder('eau', 0.8, `même eau bouillante : ${court(a.quoi)}, puis ${court(b.quoi)}`);
+    else if (a.type === 'cereale') { if (a.items[0] && a.items[0] === b.items[0]) garder('cereale', 2, `${court(b.quoi)} : une seule cuisson pour les deux`); }
+    else if (a.type === 'base') { if (a.cle && a.cle === b.cle) garder('base:' + a.cle, 3, `base commune : ${court(b.quoi)}`); }
+    else if (a.type === 'mijote') garder('mijote', 0.8, 'deux mijotés à lancer côte à côte');
+    else if (a.type === 'decoupe') {
+      const comm = b.items.filter(k => a.items.includes(k));
+      if (comm.length) {
+        const pts = comm.reduce((s, k) => s + (['oignon', 'ail', 'echalote'].includes(k) ? 0.3 : 0.8), 0);
+        const noms = b.quoi.split(/,| et | ou /).map(x => x.trim()).filter(x => comm.includes(cleIngredient(x)));
+        garder('decoupe', Math.min(2, pts), `à éplucher et couper ensemble : ${noms.join(', ')}`);
+      }
+    }
+  }));
+  return Object.values(best);
+}
 function suggestionsBatch(seeds, max) {
   const base = seeds.map(rec).filter(Boolean);
   if (!base.length) return [];
   const pris = new Set(menu.map(m => m.titre).concat(batchIgnore));
-  const pa = base.map(profilBatch);
+  const pa = base.map(profilBatch), preA = base.map(prepsDe);
   return DATA.recettes.filter(r => r.statut !== A_VALIDER && !pris.has(r.titre) && !seeds.includes(r.titre)).map(r => {
-    const p = profilBatch(r);
+    const p = profilBatch(r), preB = prepsDe(r);
+    const analyse = preB.length && preA.some(x => x.length);
     let score = 0; const communs = new Map(), procs = new Set(); let four = null;
     pa.forEach(a => {
       Object.keys(p.ings).forEach(k => { if (a.ings[k]) { communs.set(k, p.ings[k].nom); } });
       p.proc.forEach(x => { if (a.proc.includes(x)) procs.add(x); });
       if (p.temp && a.temp && Math.abs(p.temp - a.temp) <= 10 && p.proc.includes('four')) four = a.temp;
     });
-    communs.forEach((nom, k) => { score += Math.max(...pa.map(a => a.ings[k] ? Math.min(a.ings[k].poids, p.ings[k].poids) : 0)); });
-    score += procs.size * 0.7 + (four ? 1 : 0);
+    communs.forEach((nom, k) => { score += Math.max(...pa.map(a => a.ings[k] ? Math.min(a.ings[k].poids, p.ings[k].poids) : 0)) * (analyse ? 0.6 : 1); });
+    const raisons = [];
+    let liens = [];
+    if (analyse) {
+      const best = {};
+      preA.forEach(x => liensPreps(x, preB).forEach(l => { const k = l.txt.split(':')[0]; if (!best[k] || best[k].pts < l.pts) best[k] = l; }));
+      liens = Object.values(best).sort((a, b) => b.pts - a.pts);
+      score += liens.reduce((s, l) => s + l.pts, 0);
+      liens.filter(l => l.pts >= 0.8).slice(0, 3).forEach(l => raisons.push(l.txt));
+      const garde = preB.find(x => x.type === 'garde');
+      if (garde) score += 0.3;
+    } else {
+      score += procs.size * 0.7 + (four ? 1 : 0);
+    }
     if (r.types.includes("À l'avance")) score += 0.5;
     const sucre = x => x.types.some(t => ['Dessert', 'Goûter'].includes(t));
     if (sucre(r) !== base.some(sucre)) score -= 1.5;
     const s = saisonActuelle(), ls = saisonsDe(r);
     if (ls.length && !ls.includes(s)) score -= 1;
-    const raisons = [];
-    if (communs.size) raisons.push('en commun : ' + Array.from(communs.values()).slice(0, 4).join(', '));
-    if (four) raisons.push('même four à ' + four + ' °C');
-    const autres = Array.from(procs).filter(x => !(four && x === 'four'));
-    if (autres.length) raisons.push(autres.join(', '));
-    return { r, score, raisons, communs: communs.size };
-  }).filter(x => x.score >= 2.5 && x.communs).sort((a, b) => b.score - a.score).slice(0, max || 5);
+    const dejaCites = raisons.join(' ').toLowerCase();
+    const ingsTxt = Array.from(communs.values()).filter(n => !dejaCites.includes(n.toLowerCase())).slice(0, 4);
+    if (ingsTxt.length) raisons.push('en commun : ' + ingsTxt.join(', '));
+    if (!analyse) {
+      if (four) raisons.push('même four à ' + four + ' °C');
+      const autres = Array.from(procs).filter(x => !(four && x === 'four'));
+      if (autres.length) raisons.push(autres.join(', '));
+    }
+    const fort = liens.some(l => l.pts >= 2);
+    return { r, score, raisons, ok: communs.size || fort };
+  }).filter(x => x.score >= 2.5 && x.ok && x.raisons.length).sort((a, b) => b.score - a.score).slice(0, max || 5);
 }
 function batchHtml(list, titre) {
   if (!list.length) return '';

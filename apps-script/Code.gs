@@ -102,7 +102,7 @@ function ss_() { return SpreadsheetApp.openById(SPREADSHEET_ID); }
 function getData_(role) {
   const ss = ss_();
   const rows = ss.getSheetByName('Recettes').getDataRange().getDisplayValues();
-  rows.shift();
+  const entetes = rows.shift();
   const recettes = rows
     .filter(r => String(r[0]).trim() !== '')
     .map(r => ({
@@ -112,7 +112,9 @@ function getData_(role) {
       note: r[8], premiere: r[9], commentaires: r[10],
       etapes: r[11], origine: r[12], photos: r[13], ajoutee: r[14],
       statut: String(r[15] || '').trim(), par: String(r[16] || '').trim(),
-      saisons: String(r[17] || '').trim()
+      saisons: String(r[17] || '').trim(),
+      // colonnes ajoutées après R (ex. « Batch cooking ») : renvoyées par leur titre, sans modifier ce script
+      x: entetes.slice(NB_COL).reduce((o, t, i) => { if (t && r[NB_COL + i]) o[String(t).trim()] = r[NB_COL + i]; return o; }, {})
     }))
     .filter(r => role === 'admin' || r.statut !== A_VALIDER);
 
@@ -254,6 +256,12 @@ function addRecette_(req) {
     const row = lastRowA_(sh) + 1;
     ensureRows_(sh, row);
     sh.getRange(row, 1, 1, NB_COL).setValues([ligne]);
+    if (r.batch) {
+      const ent = sh.getRange(1, 1, 1, sh.getLastColumn()).getDisplayValues()[0];
+      let col = ent.findIndex(t => String(t).trim() === 'Batch cooking') + 1;
+      if (!col) { col = Math.max(sh.getLastColumn(), NB_COL) + 1; sh.getRange(1, col).setValue('Batch cooking'); }
+      sh.getRange(row, col).setValue(txt_(r.batch, 2000));
+    }
 
     // Ingrédients : rayon repris d'un ingrédient du même nom déjà présent, sinon « Autres »
     const si = ss.getSheetByName('Ingrédients');
