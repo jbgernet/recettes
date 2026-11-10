@@ -1108,7 +1108,7 @@ function renderMoi() {
         <button class="btn ghost" data-act="shareApp">📤 Envoyer le lien</button>
       </section>
       <button class="btn ghost" data-act="reload">↻ Actualiser les recettes</button>
-      <div class="hint" style="text-align:center;margin-top:14px">Favoris, menu, liste de courses et minuteurs sont enregistrés sur ce téléphone. Chaque jour d'utilisation, votre prénom et l'heure d'ouverture sont notés dans le carnet de ${esc(OWNER)}.</div>
+      <div class="hint" style="text-align:center;margin-top:14px">Favoris, menu, liste de courses et minuteurs sont enregistrés sur ce téléphone.</div>
     </main>`;
   $('sNom').onkeydown = e => { if (e.key === 'Enter') ACT.stockNew(); };
 }
@@ -1136,7 +1136,7 @@ function closeModal() { if ($('modal')) $('modal').innerHTML = ''; }
 function welcome() {
   openModal(`
     <h2>Bienvenue dans le carnet de recettes 👋</h2>
-    <div class="hint">Votre prénom sert à signer vos commentaires. ${esc(OWNER)} voit aussi les jours où l'app est ouverte, avec le prénom.</div>
+    <div class="hint">Votre prénom sert à signer vos commentaires.</div>
     <label class="lbl">Votre prénom</label>
     <input class="field" id="fPrenom" autocomplete="given-name">
     <label class="lbl">Code famille (facultatif)</label>
