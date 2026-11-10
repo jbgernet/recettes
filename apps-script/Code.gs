@@ -57,7 +57,7 @@ function json_(o) {
 }
 
 const ACTIONS = {
-  data: req => getData_(role_(req.code)),
+  data: req => { const r = role_(req.code); noterVisite_(req.auteur, r); return getData_(r); },
   role: req => ({ role: role_(req.code) }),
   addRecette: req => addRecette_(req),
   addComment: req => addComment_(req),
@@ -145,6 +145,41 @@ function getData_(role) {
   }
 
   return { role, recettes, ingredients, unitesS, pluriels, rayons, typesPlat, typesSource, commentaires };
+}
+
+/* ---------------- Journal des visites ---------------- */
+// Une ligne par personne et par jour dans l'onglet « Visites » : date, prénom, rôle, nombre d'ouvertures, dernière heure.
+function noterVisite_(auteur, role) {
+  try {
+    const tz = Session.getScriptTimeZone() || 'Europe/Brussels';
+    const now = new Date();
+    const jour = Utilities.formatDate(now, tz, 'yyyy-MM-dd');
+    const heure = Utilities.formatDate(now, tz, 'HH:mm');
+    const prenom = txt_(auteur, 40) || 'Anonyme';
+    const roleTxt = role === 'admin' ? 'Propriétaire' : role === 'famille' ? 'Famille' : 'Lecture seule';
+    withLock_(() => {
+      const ss = ss_();
+      let sv = ss.getSheetByName('Visites');
+      if (!sv) {
+        sv = ss.insertSheet('Visites');
+        sv.getRange(1, 1, 1, 5).setValues([['Date', 'Prénom', 'Rôle', 'Ouvertures', 'Dernière ouverture']]).setFontWeight('bold');
+        sv.setFrozenRows(1);
+      }
+      const n = sv.getLastRow();
+      if (n > 1) {
+        const debut = Math.max(2, n - 199);
+        const v = sv.getRange(debut, 1, n - debut + 1, 4).getDisplayValues();
+        for (let i = v.length - 1; i >= 0; i--) {
+          if (v[i][0] !== jour) break;
+          if (norm_(v[i][1]) === norm_(prenom)) {
+            sv.getRange(debut + i, 3, 1, 3).setValues([[roleTxt, (parseInt(v[i][3], 10) || 0) + 1, "'" + heure]]);
+            return;
+          }
+        }
+      }
+      sv.appendRow(["'" + jour, prenom, roleTxt, 1, "'" + heure]);   // apostrophe : gardé tel quel, pas converti en date
+    });
+  } catch (e) { /* le journal ne doit jamais empêcher l'app de charger */ }
 }
 
 /* ---------------- Écriture ---------------- */
