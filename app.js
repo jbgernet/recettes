@@ -312,7 +312,7 @@ function render() {
     ['list', '📖', 'Recettes', nbValider],
     ['frigo', '🧺', "J'ai…", 0],
     ['add', '➕', 'Ajouter', 0],
-    ['courses', '🛒', 'Menu', nbCourses],
+    ['courses', '🛒', 'Courses', nbCourses],
     ['moi', '👤', profil.prenom ? esc(profil.prenom) : 'Moi', 0]
   ].map(([v, i, l, n]) => `<button data-act="tab" data-v="${v}" class="${S.view === v || (S.view === 'recipe' && v === 'list') ? 'on' : ''}"><b>${i}</b>${l}${n ? ' <span class="badge">' + n + '</span>' : ''}</button>`).join('');
   ({ list: renderList, recipe: renderRecipe, frigo: renderFrigo, add: renderAdd, courses: renderCourses, moi: renderMoi })[S.view]();
