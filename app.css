@@ -199,3 +199,7 @@ section > .batch{margin-top:20px}
 
 .btn.menuBtn{margin-top:10px;padding:11px;font-size:15.5px}
 nav#tabs button{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.avatar{position:absolute;top:calc(12px + var(--top));right:14px;width:36px;height:36px;border-radius:50%;border:none;background:var(--accent-soft);color:var(--accent-ink);font-weight:700;font-size:16px;display:flex;align-items:center;justify-content:center;padding:0}
+.avatar.on{background:var(--accent);color:#fff}
+header h1{padding-right:46px}

@@ -312,10 +312,15 @@ function render() {
     ['list', '📖', 'Recettes', nbValider],
     ['frigo', '🧺', "J'ai…", 0],
     ['add', '➕', 'Ajouter', 0],
-    ['courses', '🛒', 'Courses', nbCourses],
-    ['moi', '👤', profil.prenom ? esc(profil.prenom) : 'Moi', 0]
+    ['courses', '🛒', 'Menu & courses', nbCourses]
   ].map(([v, i, l, n]) => `<button data-act="tab" data-v="${v}" class="${S.view === v || (S.view === 'recipe' && v === 'list') ? 'on' : ''}"><b>${i}</b>${l}${n ? ' <span class="badge">' + n + '</span>' : ''}</button>`).join('');
   ({ list: renderList, recipe: renderRecipe, frigo: renderFrigo, add: renderAdd, courses: renderCourses, moi: renderMoi })[S.view]();
+  // Accès au profil : rond en haut à droite, sauf sur la fiche recette (et le pas à pas, qui la recouvre)
+  const hd = $('app').querySelector('header');
+  if (hd && S.view !== 'recipe') {
+    const ini = profil.prenom ? esc(profil.prenom.trim()[0].toUpperCase()) : '👤';
+    hd.insertAdjacentHTML('afterbegin', `<button class="avatar ${S.view === 'moi' ? 'on' : ''}" data-act="tab" data-v="moi" aria-label="Mon profil">${ini}</button>`);
+  }
   renderTimers();
 }
 function renderKeep() { const y = $('app').scrollTop; render(); $('app').scrollTop = y; }
@@ -1173,7 +1178,7 @@ function renderMoi() {
   const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
   const standalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
   $('app').innerHTML = `
-    <header><h1>${profil.prenom ? 'Bonjour ' + esc(profil.prenom) : 'Mon profil'}</h1><div class="meta">${roleTxt}</div></header>
+    <header><button class="back" data-act="back">‹ Retour</button><h1>${profil.prenom ? 'Bonjour ' + esc(profil.prenom) : 'Mon profil'}</h1><div class="meta">${roleTxt}</div></header>
     <main>
       <section>
         <h3>Profil</h3>
