@@ -22,6 +22,8 @@ let stock = store.get('stock', ['sel', 'poivre', 'eau', "huile d'olive"]);
 let propositions = store.get('propositions', []);
 let timers = store.get('timers', []);        // [{id, label, end, fini}]
 let brouillon = store.get('brouillon', null);
+let frigoItems = store.get('frigo', []);            // ce que j'ai sous la main (onglet 🧺)
+let cuisine = store.get('cuisine', null);           // recette en cours : étape du pas à pas, cases cochées, portions
 
 const S = {
   view: 'list', q: '', type: '', filtre: 'toutes', sort: 'az', frigo: false, frigoQ: '',
@@ -253,6 +255,28 @@ function isBusy() {
   return S.view === 'add' || S.avisDirty || S.busy || !!$('modal').innerHTML || !!S.pas;
 }
 
+/* ---------- Recette en cours (survit à la sortie de l'app) ---------- */
+function saveCuisine() {
+  if (S.view !== 'recipe' || !S.open) return;
+  const garde = cuisine && cuisine.titre === S.open ? cuisine.i : null;
+  cuisine = { titre: S.open, i: S.pas ? S.pas.i : garde, ouvert: !!S.pas, portions: S.portions, done: S.done, ts: Date.now() };
+  store.set('cuisine', cuisine);
+}
+let cuisineRestauree = false;
+function restaurerCuisine() {
+  if (cuisineRestauree || !DATA) return;
+  cuisineRestauree = true;
+  if (!cuisine || !rec(cuisine.titre)) return;
+  const age = Date.now() - cuisine.ts;
+  if (cuisine.ouvert && cuisine.i != null && age < 12 * 3600e3) {
+    go('recipe', { titre: cuisine.titre });
+    S.pas = { i: Math.min(cuisine.i, Math.max(0, etapesDe(rec(cuisine.titre)).etapes.length - 1)) };
+    history.pushState({ view: 'recipe', titre: S.open, pas: true }, '');
+    renderPas(); wake();
+    toast('Reprise du pas à pas : étape ' + (S.pas.i + 1));
+  } else if (age < 3 * 3600e3) go('recipe', { titre: cuisine.titre });
+}
+
 /* ---------- Navigation ---------- */
 function go(view, opts) {
   opts = opts || {};
@@ -263,6 +287,10 @@ function go(view, opts) {
     const r = rec(S.open), m = menu.find(x => x.titre === S.open);
     S.portions = (m && num(m.portions)) || num(r.portions);
     S.done = {}; S.avisDirty = false; S.comNote = 0;
+    if (cuisine && cuisine.titre === S.open && Date.now() - cuisine.ts < 12 * 3600e3) {
+      S.done = cuisine.done || {};
+      if (num(cuisine.portions)) S.portions = num(cuisine.portions);
+    }
   }
   if (opts.push !== false) history.pushState({ view, titre: opts.titre || null }, '');
   render(); $('app').scrollTop = 0; wake();
@@ -270,7 +298,7 @@ function go(view, opts) {
 }
 window.addEventListener('popstate', e => {
   const s = e.state || { view: 'list' };
-  if (S.pas) { S.pas = null; renderPasClose(); }
+  if (S.pas) { S.pas = null; renderPasClose(); saveCuisine(); }
   closeModal();
   if (s.view === 'recipe' && rec(s.titre)) go('recipe', { titre: s.titre, push: false });
   else go(s.view || 'list', { push: false });
@@ -282,11 +310,12 @@ function render() {
   const nbValider = isAdmin() ? DATA.recettes.filter(r => r.statut === A_VALIDER).length : 0;
   $('tabs').innerHTML = [
     ['list', '📖', 'Recettes', nbValider],
+    ['frigo', '🧺', "J'ai…", 0],
     ['add', '➕', 'Ajouter', 0],
-    ['courses', '🛒', 'Menu & courses', nbCourses],
+    ['courses', '🛒', 'Menu', nbCourses],
     ['moi', '👤', profil.prenom ? esc(profil.prenom) : 'Moi', 0]
   ].map(([v, i, l, n]) => `<button data-act="tab" data-v="${v}" class="${S.view === v || (S.view === 'recipe' && v === 'list') ? 'on' : ''}"><b>${i}</b>${l}${n ? ' <span class="badge">' + n + '</span>' : ''}</button>`).join('');
-  ({ list: renderList, recipe: renderRecipe, add: renderAdd, courses: renderCourses, moi: renderMoi })[S.view]();
+  ({ list: renderList, recipe: renderRecipe, frigo: renderFrigo, add: renderAdd, courses: renderCourses, moi: renderMoi })[S.view]();
   renderTimers();
 }
 function renderKeep() { const y = $('app').scrollTop; render(); $('app').scrollTop = y; }
@@ -400,7 +429,6 @@ function renderList() {
         : `<input id="q" class="field" type="search" placeholder="Plat, ingrédient, livre (Yummix, Whoogy's…)" value="${esc(S.q)}" autocomplete="off">`}
       <div class="seg">
         ${filtres.map(([k, l]) => `<button data-act="filtre" data-k="${k}" class="${S.filtre === k ? 'on' : ''} ${k === 'valider' ? 'warn' : ''}">${l}</button>`).join('')}
-        <button data-act="frigo" class="${S.frigo ? 'on' : ''}">🧺 Avec ce que j'ai</button>
       </div>
       <div class="chips">
         <label class="chip srcchip ${S.source ? 'on' : ''}">📚 <select id="srcSel" aria-label="Filtrer par livre ou source">
@@ -434,6 +462,70 @@ function renderList() {
   };
   if ($('sort')) $('sort').onchange = e => { S.sort = e.target.value; renderList(); };
   if ($('srcSel')) $('srcSel').onchange = e => { S.source = e.target.value; renderList(); };
+}
+
+/* ---------- Avec ce que j'ai (onglet 🧺) ---------- */
+const terme = t => racine(t);
+function frigoResultats() {
+  const terms = frigoItems.map(x => cleIngredient(x) || racine(x)).filter(t => t.length >= 2);
+  if (!terms.length) return [];
+  // « crème » doit trouver « crème fraîche » mais pas « crème d'amande » ; « butternut » trouve « courge butternut »
+  const correspond = (nom, t) => {
+    const key = cleIngredient(nom), n = norm(nom);
+    if (!key) return false;
+    if (key === t) return true;
+    const compose = /\s(de|d'|d|a|au|aux)\s/.test(key);
+    if (!compose && key.startsWith(t + ' ')) return true;
+    return t.length >= 4 && !key.startsWith(t) && new RegExp('(^|[^a-z])' + t.replace(/[^a-z' -]/g, '') + '(s|x)?([^a-z]|$)').test(n);
+  };
+  return DATA.recettes.filter(r => r.statut !== A_VALIDER && (!S.frigoType || r.types.includes(S.frigoType))).map(r => {
+    const utilise = [], missing = [];
+    (DATA.ingredients[r.titre] || []).forEach(i => {
+      const t = terms.find(x => correspond(i.n, x));
+      if (t) { if (!utilise.includes(nomAffiche(i.n))) utilise.push(nomAffiche(i.n)); }
+      else if (!enStock(i.n) && norm(i.rayon) !== norm('Épices et huiles')) missing.push(nomAffiche(i.n));
+    });
+    return { r, utilise, missing };
+  }).filter(x => x.utilise.length).sort((a, b) => (a.missing.length - 1.5 * a.utilise.length) - (b.missing.length - 1.5 * b.utilise.length) || a.missing.length - b.missing.length || a.r.titre.localeCompare(b.r.titre, 'fr'));
+}
+function nomsIngredients() {
+  const s = new Set();
+  Object.values(DATA.ingredients).forEach(l => l.forEach(i => { const n = nomAffiche(i.n); if (n && n.length < 30 && !enStock(n)) s.add(n); }));
+  return Array.from(s).sort((a, b) => a.localeCompare(b, 'fr'));
+}
+function renderFrigo() {
+  const res = frigoResultats();
+  const types = allTypes().filter(t => ['Plat principal', 'Entrée', 'Soupe', 'Salade', 'Dessert', 'Accompagnement', 'Goûter', 'Bébé'].includes(t));
+  $('app').innerHTML = `
+    <header>
+      <h1>Avec ce que j'ai</h1>
+      <div class="meta">Ajoutez ce que vous avez sous la main. Les produits « toujours à la maison » et les épices comptent comme disponibles.</div>
+    </header>
+    <main>
+      <section>
+        <h3>Sous la main ${frigoItems.length ? '<button class="tog" data-act="frigoClear">' + (S.confirm === 'frigo' ? 'Confirmer ?' : 'Tout effacer') + '</button>' : ''}</h3>
+        <div class="chips wrap" style="padding-top:0">${frigoItems.map((x, i) => `<button class="chip on" data-act="frigoDel" data-i="${i}">${esc(x)} ✕</button>`).join('') || '<span class="hint">Rien pour l\'instant.</span>'}</div>
+        <div class="add">
+          <input class="field" id="frigoIn" list="frigoList" placeholder="Ex : poireau, crème, lardons" autocomplete="off" autocapitalize="off">
+          <button class="go" data-act="frigoAdd">＋</button>
+        </div>
+        <datalist id="frigoList">${nomsIngredients().map(n => `<option value="${esc(n)}">`).join('')}</datalist>
+        <details class="stock" style="margin-top:10px"><summary>Toujours à la maison (${stock.length})</summary>
+          <div class="chips wrap">${stock.map(s => `<span class="chip">${esc(s)}</span>`).join('')}</div>
+          <div class="hint">À modifier dans l'onglet 👤.</div></details>
+      </section>
+      ${frigoItems.length ? `
+      <div class="chips" style="padding:0 2px 6px">
+        <button class="chip ${S.frigoType ? '' : 'on'}" data-act="frigoType" data-t="">Tout</button>
+        ${types.map(t => `<button class="chip ${S.frigoType === t ? 'on' : ''}" data-act="frigoType" data-t="${esc(t)}">${esc(t)}</button>`).join('')}
+      </div>
+      <div class="bar" style="padding:2px 4px 6px"><span>${res.length} recette${res.length > 1 ? 's' : ''}, celles où il manque le moins d'abord</span></div>
+      ${res.length ? res.slice(0, 40).map(x => cardHtml(x.r, `
+        <div class="missing none" style="font-weight:500">✓ ${esc(x.utilise.slice(0, 5).join(', '))}</div>
+        ${x.missing.length ? `<div class="missing">Il manque : ${esc(x.missing.slice(0, 6).join(', '))}${x.missing.length > 6 ? '…' : ''}</div>` : '<div class="missing none">Vous avez tout !</div>'}`)).join('')
+        : '<div class="empty">Aucune recette avec ces ingrédients.</div>'}` : '<div class="empty">Ajoutez un ou plusieurs ingrédients pour voir les recettes possibles.</div>'}
+    </main>`;
+  $('frigoIn').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); ACT.frigoAdd(); } };
 }
 
 /* ---------- Minuteurs dans les étapes ---------- */
@@ -482,6 +574,7 @@ function renderRecipe() {
       <div class="meta">${stars(r.note)} ${esc([[r.typeSource, r.source].filter(Boolean).join(' – '), r.par ? 'ajoutée par ' + r.par : ''].filter(Boolean).join(' · '))}</div>
       ${moy ? `<div class="meta">Proches : ${stars(moy, 'blue')} (${notesProches.length})</div>` : ''}
       <div class="tags">${saisonsDe(r).length === 4 ? '<span class="tag ssn">🗓 Toutes saisons</span>' : saisonsDe(r).map(s => `<span class="tag ssn">${emoji(s)} ${s}</span>`).join('')}${r.types.map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div>
+      ${pending ? '' : `<button class="btn menuBtn ${m ? 'ok' : ''}" data-act="menuSheet">${m ? '✓ Au menu : ' + esc(jourNom(m.jour)) + ' · modifier' : '🗓 Ajouter au menu de la semaine'}</button>`}
       <div class="toggles">
         <button class="tog ${perso.fav.includes(r.titre) ? 'on' : ''}" data-act="perso" data-k="fav">♥ Favori</button>
         <button class="tog ${perso.tester.includes(r.titre) ? 'on' : ''}" data-act="perso" data-k="tester">🔖 À tester</button>
@@ -511,7 +604,7 @@ function renderRecipe() {
       <section>
         <h3>Préparation</h3>
         ${temps.map(t => `<div class="time">⏱ ${esc(t)}</div>`).join('')}
-        <button class="btn dark" data-act="pas" style="margin:4px 0 10px">👩‍🍳 Mode pas à pas</button>
+        <button class="btn dark" data-act="pas" style="margin:4px 0 10px">👩‍🍳 ${cuisine && cuisine.titre === r.titre && cuisine.i != null ? 'Reprendre le pas à pas (étape ' + (cuisine.i + 1) + ')' : 'Mode pas à pas'}</button>
         <div class="hint">Touchez une étape pour la cocher, une durée pour lancer un minuteur.</div>
         <ol class="steps">
           ${etapes.map((e, k) => `<li data-act="check" data-k="e${k}" class="${S.done['e' + k] ? 'done' : ''}">${avecMinuteurs(e, r.titre + ' · étape ' + (k + 1))}</li>`).join('')}
@@ -1152,10 +1245,21 @@ const ACT = {
   open: el => { if (rec(el.dataset.t)) go('recipe', { titre: el.dataset.t }); },
   back: () => history.length > 1 ? history.back() : go('list'),
   filtre: el => { S.filtre = el.dataset.k; renderList(); },
+  frigoAdd: () => {
+    const v = $('frigoIn').value.split(/[,;]+/).map(x => x.trim()).filter(Boolean);
+    v.forEach(x => { if (!frigoItems.some(y => norm(y) === norm(x))) frigoItems.push(x); });
+    store.set('frigo', frigoItems); renderKeep(); if ($('frigoIn')) $('frigoIn').focus();
+  },
+  frigoDel: el => { frigoItems.splice(+el.dataset.i, 1); store.set('frigo', frigoItems); renderKeep(); },
+  frigoClear: () => {
+    if (S.confirm !== 'frigo') { S.confirm = 'frigo'; return renderKeep(); }
+    S.confirm = null; frigoItems = []; store.set('frigo', frigoItems); renderKeep();
+  },
+  frigoType: el => { S.frigoType = el.dataset.t; renderKeep(); },
   frigo: () => { S.frigo = !S.frigo; renderList(); const i = $('frigoQ') || $('q'); if (S.frigo) i.focus(); },
   type: el => { S.type = el.dataset.t; renderList(); },
-  check: el => { S.done[el.dataset.k] = !S.done[el.dataset.k]; el.classList.toggle('done'); },
-  portions: el => { const p = S.portions + (+el.dataset.d); if (p >= 1 && p <= 99) { S.portions = p; renderKeep(); } },
+  check: el => { S.done[el.dataset.k] = !S.done[el.dataset.k]; el.classList.toggle('done'); saveCuisine(); },
+  portions: el => { const p = S.portions + (+el.dataset.d); if (p >= 1 && p <= 99) { S.portions = p; saveCuisine(); renderKeep(); } },
   perso: el => {
     const k = el.dataset.k, l = perso[k], t = S.open;
     perso[k] = l.includes(t) ? l.filter(x => x !== t) : l.concat(t);
@@ -1167,10 +1271,19 @@ const ACT = {
   unmenu: () => { menu = menu.filter(m => m.titre !== S.sheetTitre); store.set('menu', menu); closeModal(); renderKeep(); },
   closeModal: () => closeModal(),
   overlay: (el, e) => { if (e.target === el) closeModal(); },
-  pas: () => { S.pas = { i: 0 }; history.pushState({ view: 'recipe', titre: S.open, pas: true }, ''); renderPas(); wake(); },
-  pasNext: () => { S.pas.i++; renderPas(); },
-  pasPrev: () => { if (S.pas.i > 0) { S.pas.i--; renderPas(); } },
-  pasClose: () => { S.pas = null; renderPasClose(); history.back(); },
+  pas: () => {
+    const reprise = cuisine && cuisine.titre === S.open && cuisine.i != null && Date.now() - cuisine.ts < 12 * 3600e3;
+    S.pas = { i: reprise ? cuisine.i : 0 };
+    history.pushState({ view: 'recipe', titre: S.open, pas: true }, ''); renderPas(); wake(); saveCuisine();
+  },
+  pasNext: () => { S.pas.i++; saveCuisine(); renderPas(); },
+  pasPrev: () => { if (S.pas.i > 0) { S.pas.i--; saveCuisine(); renderPas(); } },
+  pasClose: el => {
+    const fini = el && /Terminé/.test(el.textContent);
+    S.pas = null; renderPasClose();
+    if (fini) { cuisine = null; store.set('cuisine', null); } else saveCuisine();
+    history.back();
+  },
   timer: el => startTimer(+el.dataset.sec, el.dataset.label),
   timerStop: el => { timers = timers.filter(t => t.id !== el.dataset.id); store.set('timers', timers); renderTimers(); },
   ownerStar: el => {
@@ -1300,15 +1413,17 @@ document.addEventListener('change', e => {
 });
 document.addEventListener('toggle', e => { if (e.target.classList && e.target.classList.contains('panier')) S.panierOuvert = e.target.open; }, true);
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') { wake(); renderTimers(); if (DATA) refresh(); }
+  if (document.visibilityState === 'visible') { wake(); renderTimers(); if (DATA && !S.pas) refresh(); }
+  else saveCuisine();
 });
 
 let deferredPrompt = null;
+window.addEventListener('pagehide', saveCuisine);
 window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferredPrompt = e; if (S.view === 'moi') renderKeep(); });
 
 /* ---------- Démarrage ---------- */
 history.replaceState({ view: 'list' }, '');
-if (DATA) render();
-refresh(true).then(() => { if (DATA && !profil.prenom && !$('modal').innerHTML) welcome(); });
+if (DATA) { render(); restaurerCuisine(); }
+refresh(true).then(() => { restaurerCuisine(); if (DATA && !profil.prenom && !$('modal').innerHTML && !S.pas) welcome(); });
 if (timers.length) tick();
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});

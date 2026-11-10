@@ -196,3 +196,6 @@ details.panier li .txt{color:var(--muted)}
 .batch-i .name small{display:block;color:var(--muted);font-size:12.5px;margin-top:1px}
 .batch-i .go{border:none;background:#4f7a4a;color:#fff;border-radius:10px;padding:7px 10px;font-size:13px;font-weight:600;flex:none}
 section > .batch{margin-top:20px}
+
+.btn.menuBtn{margin-top:10px;padding:11px;font-size:15.5px}
+nav#tabs button{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
