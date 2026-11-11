@@ -106,13 +106,87 @@ function formatLine(qtxt, val, unite, nom) {
   if (plur) nom = DATA.pluriels[nom] || (Object.values(DATA.pluriels).includes(nom) ? nom : pluriel(nom));
   return (qtxt ? '<b>' + esc(qtxt) + '</b> ' : '') + esc(nom);
 }
+/* ---------- Adaptation des quantités aux portions ---------- */
+const UNITES_POIDS = ['g', 'kg', 'mg', 'ml', 'cl', 'dl', 'l'];
+const estOeuf = nom => /^(gros |petits? |moyens? )?(oeufs?|œufs?|jaunes? d|blancs? d)/.test(norm(nom).replace(/œ/g, 'oe'));
+// Arrondit une quantité recalculée à une valeur utilisable en cuisine ; approx = l'arrondi a changé la valeur
+function arrondi(v, unite, nom) {
+  if (!(v > 0)) return { r: v, approx: false };
+  const u = norm(unite);
+  let r;
+  if (UNITES_POIDS.includes(u)) r = v < 10 ? Math.round(v * 2) / 2 : v < 100 ? Math.round(v / 5) * 5 : Math.round(v / 10) * 10;
+  else if (estOeuf(nom)) r = Math.max(1, Math.round(v));
+  else if (v < 1) r = Math.max(0.25, Math.round(v * 4) / 4);
+  else if (v < 4) r = Math.round(v * 2) / 2;
+  else r = Math.round(v);
+  // « ≈ » seulement pour ce qui se compte (œufs, courgettes, cuillères) : arrondir des grammes est normal
+  return { r, approx: !UNITES_POIDS.includes(u) && Math.abs(r - v) / v > 0.03 };
+}
+// Quantités écrites dans un texte (étapes, précisions entre parenthèses) : « 200 g », « 2 c. à soupe », « 3 œufs »…
+const RX_UNITES_TXT = 'kg|g|mg|ml|cl|dl|l|c\\.?\\s*à\\s*(?:soupe|café|cafe)|cuill[eè]res?\\s*à\\s*(?:soupe|café|cafe)|càs|càc|pincées?|gousses?|tranches?|feuilles?|brins?|poignées?|sachets?|boîtes?|verres?|tasses?|bottes?|branches?|cubes?|pots?|briquettes?';
+const RX_QTE_TXT = new RegExp('(?<![\\d/.,])(\\d+\\/\\d+|\\d+(?:[.,]\\d+)?|[½¼¾])(?:(\\s*(?:à|-)\\s*)(\\d+(?:[.,]\\d+)?))?(\\s*)(' + RX_UNITES_TXT + ')(?![a-zà-ÿ])'
+  + '|(?<![\\d/.,°])(\\d+(?:[.,]\\d+)?|[½¼¾])(\\s+)((?:gros |grosses |petits? |petites |belles? |beaux )?)([a-zà-ÿœ\'’-]+)', 'gi');
+const valeurTxt = s => { const p = parseQty(String(s).replace(',', '.')); return p && p.raw == null ? p.a : null; };
+function adapterTexte(texte, ratio, mots) {
+  texte = String(texte || '');
+  if (!ratio || Math.abs(ratio - 1) < 0.001) return esc(texte);
+  let out = '', last = 0, m;
+  RX_QTE_TXT.lastIndex = 0;
+  while ((m = RX_QTE_TXT.exec(texte))) {
+    let rempl = null;
+    if (m[1]) {
+      const v = valeurTxt(m[1]);
+      if (v != null) {
+        const unite = /^(kg|g|mg|ml|cl|dl|l)$/i.test(m[5]) ? m[5] : '';
+        const a = arrondi(v * ratio, unite || 'x', '');
+        let q = fmt(a.r);
+        if (m[3]) { const b = valeurTxt(m[3]); if (b != null) q += m[2] + fmt(arrondi(b * ratio, unite || 'x', '').r); }
+        rempl = `<b class="sc">${a.approx && !m[3] ? '≈ ' : ''}${esc(q)}</b>${esc(m[4] + m[5])}`;
+      }
+    } else if (m[6] && mots) {
+      const w = norm(m[9]).replace(/œ/g, 'oe').replace(/(x|s)$/, '');
+      if (mots.has(w)) {
+        const v = valeurTxt(m[6]);
+        if (v != null) {
+          const a = arrondi(v * ratio, '', m[9]);
+          let mot = m[9];
+          if (a.r < 2 && /[^s]s$/i.test(mot)) mot = mot.slice(0, -1);                 // 1 œuf
+          else if (a.r >= 2 && !/[sx]$/i.test(mot)) mot = /(eau|au|eu)$/i.test(mot) ? mot + 'x' : mot + 's';   // 2 oignons
+          rempl = `<b class="sc">${a.approx ? '≈ ' : ''}${esc(fmt(a.r))}</b>${esc(m[7] + m[8] + mot)}`;
+        }
+      }
+    }
+    if (rempl != null) { out += esc(texte.slice(last, m.index)) + rempl; last = m.index + m[0].length; }
+  }
+  return out + esc(texte.slice(last));
+}
+// Premiers mots des ingrédients d'une recette (pour reconnaître « 2 œufs », « 3 carottes » dans les étapes)
+function motsIngredients(r) {
+  const s = new Set();
+  (DATA.ingredients[r.titre] || []).forEach(i => {
+    const w = norm(nomAffiche(i.n)).replace(/œ/g, 'oe').split(/[\s']+/)[0];
+    if (w && w.length >= 3) s.add(w.replace(/(x|s)$/, ''));
+  });
+  return s;
+}
+
 function ligne(ing, ratio) {
   const p = parseQty(ing.q);
-  let qtxt = '', val = 0;
+  let qtxt = '', val = 0, approx = false;
+  const adapte = ratio && Math.abs(ratio - 1) > 0.001;
   if (p && p.raw) { qtxt = p.raw; val = 1; }
-  else if (p && p.b != null) { qtxt = fmt(p.a * ratio) + ' à ' + fmt(p.b * ratio); val = p.b * ratio; }
-  else if (p) { qtxt = fmt(p.a * ratio); val = p.a * ratio; }
-  return formatLine(qtxt, val, ing.u, ing.n);
+  else if (p && p.b != null) {
+    const a = adapte ? arrondi(p.a * ratio, ing.u, ing.n).r : p.a, b = adapte ? arrondi(p.b * ratio, ing.u, ing.n).r : p.b;
+    qtxt = fmt(a) + ' à ' + fmt(b); val = b;
+  } else if (p) {
+    const a = adapte ? arrondi(p.a * ratio, ing.u, ing.n) : { r: p.a, approx: false };
+    qtxt = fmt(a.r); val = a.r; approx = a.approx;
+  }
+  let html = formatLine(qtxt, val, ing.u, ing.n);
+  if (approx) html = html.replace('<b>', '<b>≈ ');
+  // Précisions entre parenthèses : « (environ 300 g) » suit aussi les portions
+  if (adapte) html = html.replace(/\(([^()]*)\)/g, (m0, inner) => '(' + adapterTexte(plain(inner), ratio, null) + ')');
+  return html;
 }
 const stars = (n, cls) => { n = Math.round(num(n) || 0); return n ? '<span class="stars ' + (cls || '') + '">' + '★'.repeat(n) + '☆'.repeat(Math.max(0, 5 - n)) + '</span>' : ''; };
 
@@ -535,8 +609,8 @@ function renderFrigo() {
 
 /* ---------- Minuteurs dans les étapes ---------- */
 const RX_DUREE = /(\d+)\s*h\s*(\d{2})(?!\d)|(\d+(?:[.,]\d+)?)(?:\s*(?:à|-|ou)\s*(\d+(?:[.,]\d+)?))?\s*(heures?|minutes?|mn|min|secondes?|sec|h|s)(?![a-zà-ÿ])/gi;
-function avecMinuteurs(texte, label) {
-  return esc(texte).replace(RX_DUREE, (m, hh, mm, a, b, unit) => {
+function avecMinuteurs(texte, label, ratio, mots) {
+  return adapterTexte(texte, ratio, mots).replace(RX_DUREE, (m, hh, mm, a, b, unit) => {
     let sec;
     if (hh) sec = (+hh) * 3600 + (+mm) * 60;
     else {
@@ -564,6 +638,8 @@ function renderRecipe() {
   const ratio = base && S.portions ? S.portions / base : 1;
   const ings = DATA.ingredients[r.titre] || [];
   const { temps, etapes } = etapesDe(r);
+  const motsR = motsIngredients(r);
+  const adapte = Math.abs(ratio - 1) > 0.001;
   const isUrl = s => /^https?:\/\//i.test(String(s || '').trim());
   const m = menu.find(x => x.titre === r.titre);
   const coms = comsDe(r.titre);
@@ -610,9 +686,10 @@ function renderRecipe() {
         <h3>Préparation</h3>
         ${temps.map(t => `<div class="time">⏱ ${esc(t)}</div>`).join('')}
         <button class="btn dark" data-act="pas" style="margin:4px 0 10px">👩‍🍳 ${cuisine && cuisine.titre === r.titre && cuisine.i != null ? 'Reprendre le pas à pas (étape ' + (cuisine.i + 1) + ')' : 'Mode pas à pas'}</button>
+        ${adapte ? `<div class="adapt">Quantités adaptées pour ${fmt(S.portions)} ${esc(r.unitePortions)} (au lieu de ${fmt(base)}), y compris dans les étapes : <b class="sc">en orange</b>. Les temps de cuisson, eux, ne changent pas.</div>` : ''}
         <div class="hint">Touchez une étape pour la cocher, une durée pour lancer un minuteur.</div>
         <ol class="steps">
-          ${etapes.map((e, k) => `<li data-act="check" data-k="e${k}" class="${S.done['e' + k] ? 'done' : ''}">${avecMinuteurs(e, r.titre + ' · étape ' + (k + 1))}</li>`).join('')}
+          ${etapes.map((e, k) => `<li data-act="check" data-k="e${k}" class="${S.done['e' + k] ? 'done' : ''}">${avecMinuteurs(e, r.titre + ' · étape ' + (k + 1), ratio, motsR)}</li>`).join('')}
         </ol>
       </section>` : ''}
       ${isAdmin() ? avisAdminHtml(r) : (ownerAvis ? `
@@ -698,10 +775,10 @@ function renderPas() {
   let el = $('pas');
   if (!el) { el = document.createElement('div'); el.id = 'pas'; el.className = 'pas'; document.body.appendChild(el); }
   el.innerHTML = `
-    <div class="top"><span>Étape ${i + 1} / ${n}</span><button class="x" data-act="pasClose">✕</button></div>
+    <div class="top"><span>Étape ${i + 1} / ${n}${Math.abs(ratio - 1) > 0.001 ? ' · pour ' + fmt(S.portions) + ' ' + esc(r.unitePortions) : ''}</span><button class="x" data-act="pasClose">✕</button></div>
     <div class="prog"><i style="width:${((i + 1) / n) * 100}%"></i></div>
     <div class="body">
-      <div class="stext">${avecMinuteurs(etapes[i], r.titre + ' · étape ' + (i + 1))}</div>
+      <div class="stext">${avecMinuteurs(etapes[i], r.titre + ' · étape ' + (i + 1), ratio, motsIngredients(r))}</div>
       ${ings.length ? `<div class="sings"><div class="meta">Pour cette étape</div>${ings.map(x => `<div>${x}</div>`).join('')}</div>` : ''}
     </div>
     <div class="nav">
