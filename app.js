@@ -622,6 +622,13 @@ function avecMinuteurs(texte, label, ratio, mots) {
   });
 }
 
+// Avertissement quand une quantité d'eau a été recalculée (règle de trois) : à vérifier en cuisinant
+const estThermomix = r => norm(r.typeSource) === 'thermomix' || /thermomix|varoma|vitesse \d/.test(norm(r.etapes));
+function noteEau(texte, html, r) {
+  if (!/class="sc"/.test(html) || !/\beau\b/i.test(texte)) return '';
+  return `<div class="eau">💧 Quantité d'eau recalculée par règle de trois à partir des portions. Vérifiez qu'elle reste possible et pertinente${estThermomix(r) ? ' : le bol du Thermomix contient environ 2 litres au maximum, et l\'eau pour le Varoma ou le panier dépend surtout du temps de cuisson, pas des quantités' : ' (eau de cuisson, taille de la casserole…)'}.</div>`;
+}
+
 function etapesDe(r) {
   const lignes = String(r.etapes || '').split('\n').map(s => s.trim()).filter(Boolean);
   return {
@@ -689,7 +696,7 @@ function renderRecipe() {
         ${adapte ? `<div class="adapt">Quantités adaptées pour ${fmt(S.portions)} ${esc(r.unitePortions)} (au lieu de ${fmt(base)}), y compris dans les étapes : <b class="sc">en orange</b>. Les temps de cuisson, eux, ne changent pas.</div>` : ''}
         <div class="hint">Touchez une étape pour la cocher, une durée pour lancer un minuteur.</div>
         <ol class="steps">
-          ${etapes.map((e, k) => `<li data-act="check" data-k="e${k}" class="${S.done['e' + k] ? 'done' : ''}">${avecMinuteurs(e, r.titre + ' · étape ' + (k + 1), ratio, motsR)}</li>`).join('')}
+          ${etapes.map((e, k) => `<li data-act="check" data-k="e${k}" class="${S.done['e' + k] ? 'done' : ''}">${(h => h + noteEau(e, h, r))(avecMinuteurs(e, r.titre + ' · étape ' + (k + 1), ratio, motsR))}</li>`).join('')}
         </ol>
       </section>` : ''}
       ${isAdmin() ? avisAdminHtml(r) : (ownerAvis ? `
@@ -778,7 +785,7 @@ function renderPas() {
     <div class="top"><span>Étape ${i + 1} / ${n}${Math.abs(ratio - 1) > 0.001 ? ' · pour ' + fmt(S.portions) + ' ' + esc(r.unitePortions) : ''}</span><button class="x" data-act="pasClose">✕</button></div>
     <div class="prog"><i style="width:${((i + 1) / n) * 100}%"></i></div>
     <div class="body">
-      <div class="stext">${avecMinuteurs(etapes[i], r.titre + ' · étape ' + (i + 1), ratio, motsIngredients(r))}</div>
+      <div class="stext">${(h => h + noteEau(etapes[i], h, r))(avecMinuteurs(etapes[i], r.titre + ' · étape ' + (i + 1), ratio, motsIngredients(r)))}</div>
       ${ings.length ? `<div class="sings"><div class="meta">Pour cette étape</div>${ings.map(x => `<div>${x}</div>`).join('')}</div>` : ''}
     </div>
     <div class="nav">
