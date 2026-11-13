@@ -667,6 +667,7 @@ function renderRecipe() {
         <button class="tog ${perso.fav.includes(r.titre) ? 'on' : ''}" data-act="perso" data-k="fav">♥ Favori</button>
         <button class="tog ${perso.tester.includes(r.titre) ? 'on' : ''}" data-act="perso" data-k="tester">🔖 À tester</button>
         ${'wakeLock' in navigator ? `<button class="tog ${S.wake ? 'on' : ''}" data-act="wake">🔆 Écran allumé</button>` : ''}
+        ${peutModifier(r) ? '<button class="tog" data-act="modifier">✏️ Modifier</button>' : ''}
       </div>
     </header>
     <main>
@@ -1162,10 +1163,10 @@ function renderAdd() {
   const f = brouillon || (brouillon = blankForm());
   if (!Array.isArray(f.saisons)) { f.saisons = []; f.saisonsAuto = true; }
   $('app').innerHTML = `
-    <header><h1>Ajouter une recette</h1>
-      <div class="meta">${isAdmin() ? 'Elle sera publiée directement.' : 'Elle sera visible par tous après validation par ' + esc(OWNER) + '.'}</div></header>
+    <header>${S.editTitre ? '<button class="back" data-act="annulerModif">‹ Annuler</button>' : ''}<h1>${S.editTitre ? 'Modifier la recette' : 'Ajouter une recette'}</h1>
+      <div class="meta">${S.editTitre ? 'Les notes, commentaires et l\'analyse batch cooking sont conservés.' : isAdmin() ? 'Elle sera publiée directement.' : 'Elle sera visible par tous après validation par ' + esc(OWNER) + '.'}</div></header>
     <main>
-      <section class="auto">
+      ${S.editTitre ? '' : `<section class="auto">
         <h3>Remplir automatiquement <span class="meta">sans IA</span></h3>
         <button class="btn ghost" data-act="pdfPick" style="margin-top:0">📄 Importer un PDF</button>
         ${S.pdfDessine ? `<div class="adapt" style="margin-top:8px">Ce PDF n'a pas de texte lisible (il a sans doute été créé avec « Microsoft Print to PDF », qui dessine les lettres). Plus simple : <b>sélectionnez tout le texte de la page web et collez-le ci-dessous</b>. Sinon, créez le PDF avec « Enregistrer au format PDF » de Chrome ou Edge, ou depuis l'iPhone (Partager → Imprimer → Partager), qui gardent le texte. Ou faites une capture et utilisez « Texte en direct ».</div>` : ''}
@@ -1174,7 +1175,7 @@ function renderAdd() {
         <textarea class="field" id="texteBrut" rows="4" placeholder="Copié d'une page web, ou d'une photo avec « Texte en direct » (appui long sur le texte de la photo, puis Copier)"></textarea>
         <button class="btn ghost" data-act="decouper">✂️ Découper et remplir le formulaire</button>
         <div class="hint">Le texte est rangé grâce aux titres « Ingrédients » et « Préparation ». Vérifiez chaque champ ensuite.</div>
-      </section>
+      </section>`}
       <section>
         <label class="lbl">Titre *</label>
         <input class="field" data-f="titre" value="${esc(f.titre)}" placeholder="Ex : Tarte aux poireaux">
@@ -1212,19 +1213,20 @@ function renderAdd() {
         <label class="lbl">Texte d'origine (facultatif)</label>
         <textarea class="field" data-f="origine" rows="3" placeholder="Collez ici la recette d'origine complète si vous voulez la garder.">${esc(f.origine)}</textarea>
       </section>
-      <button class="btn" data-act="submitRecette" ${S.busy ? 'disabled' : ''}>${S.busy ? 'Envoi…' : isAdmin() ? 'Publier la recette' : 'Envoyer la recette'}</button>
-      <button class="btn ghost" data-act="clearForm" style="border-color:var(--line);color:var(--muted)">${S.confirm === 'form' ? 'Touchez encore pour tout effacer' : 'Effacer le formulaire'}</button>
+      <button class="btn" data-act="submitRecette" ${S.busy ? 'disabled' : ''}>${S.busy ? 'Envoi…' : S.editTitre ? 'Enregistrer les modifications' : isAdmin() ? 'Publier la recette' : 'Envoyer la recette'}</button>
+      ${S.editTitre ? '<button class="btn ghost" data-act="annulerModif" style="border-color:var(--line);color:var(--muted)">Annuler</button>'
+        : `<button class="btn ghost" data-act="clearForm" style="border-color:var(--line);color:var(--muted)">${S.confirm === 'form' ? 'Touchez encore pour tout effacer' : 'Effacer le formulaire'}</button>`}
     </main>`;
   document.querySelectorAll('[data-f]').forEach(el => {
     const ev = el.tagName === 'SELECT' ? 'onchange' : 'oninput';
-    el[ev] = () => { brouillon[el.dataset.f] = el.value; store.set('brouillon', brouillon); if (el.dataset.f === 'ingredients') { renderPreview(); renderSaisonsForm(); } };
+    el[ev] = () => { brouillon[el.dataset.f] = el.value; saveBrouillon(); if (el.dataset.f === 'ingredients') { renderPreview(); renderSaisonsForm(); } };
   });
   renderPreview(); renderSaisonsForm();
 }
 function renderSaisonsForm() {
   const box = $('saisonsBox'); if (!box) return;
   const f = brouillon, sug = suggestionSaisons(parsedIngredients());
-  if (f.saisonsAuto) { f.saisons = sug.saisons.slice(); store.set('brouillon', f); }
+  if (f.saisonsAuto) { f.saisons = sug.saisons.slice(); saveBrouillon(); }
   const toutes = NOMS_SAISONS.every(s => f.saisons.includes(s));
   box.innerHTML = `
     <div class="chips wrap" style="padding-top:0">
@@ -1235,6 +1237,34 @@ function renderSaisonsForm() {
       ? (sug.saisons.length ? '💡 Proposition d\'après les ingrédients (' + esc(sug.vus.slice(0, 4).join(', ')) + ') : vérifiez ou corrigez.' : 'Pas de proposition automatique : aucun ingrédient de saison reconnu. Choisissez, ou laissez vide.')
       : 'Si la recette indique une saison, reprenez-la.'}</div>`;
 }
+/* ---------- Modifier une recette existante ---------- */
+// En mode modification, le formulaire « Ajouter » est réutilisé ; le brouillon d'ajout en cours est mis de côté
+function saveBrouillon() { store.set(S.editTitre ? 'brouillonEdit' : 'brouillon', brouillon); }
+function formDepuisRecette(r) {
+  const ings = (DATA.ingredients[r.titre] || []).map(i => [String(i.q || '').replace('.', ','), i.u, i.n].filter(x => String(x).trim()).join(' ')).join('\n');
+  return {
+    titre: r.titre, typeSource: r.typeSource || '', source: r.source || '', lien: r.lien || '',
+    portions: r.portions || '', unitePortions: r.unitePortions || 'personnes', types: r.types.slice(),
+    saisons: saisonsDe(r), saisonsAuto: false, aliments: r.aliments.join(', '),
+    ingredients: ings, etapes: r.etapes || '', origine: r.origine || ''
+  };
+}
+function commencerModif(titre, form) {
+  S.brouillonAjout = brouillon;
+  S.editTitre = titre;
+  brouillon = form;
+  saveBrouillon();
+  go('add');
+}
+function finirModif() {
+  S.editTitre = null; brouillon = S.brouillonAjout || null; S.brouillonAjout = null;
+  store.set('brouillonEdit', null);
+}
+function peutModifier(r) {
+  if (isAdmin()) return true;
+  return profil.role === 'famille' && r.statut === A_VALIDER && norm(r.par) === norm(profil.prenom);
+}
+
 /* ---------- Remplissage automatique sans IA : PDF (pdf.js, sur le téléphone) et texte collé ---------- */
 let pdfjsLib = null;
 async function chargerPdfjs() {
@@ -1314,7 +1344,7 @@ function remplirDepuisTexte(brut, origine) {
     const f = brouillon || (brouillon = blankForm());
     if (d.titre) f.titre = d.titre;
     if (d.portions) { f.portions = d.portions; if (d.unite) f.unitePortions = d.unite; }
-    store.set('brouillon', f); renderKeep(); return;
+    saveBrouillon(); renderKeep(); return;
   }
   S.pdfDessine = false;
   if (!d.ingredients.length && !d.etapes.length) {
@@ -1332,7 +1362,7 @@ function remplirDepuisTexte(brut, origine) {
   }
   f.origine = String(origine || brut).trim();
   f.saisonsAuto = true;
-  store.set('brouillon', f); S.confirm = null;
+  saveBrouillon(); S.confirm = null;
   renderKeep();
   if (d.ingredients.length || d.etapes.length) toast('Formulaire rempli : ' + d.ingredients.length + ' ingrédients, ' + d.etapes.length + ' étapes. Vérifiez chaque champ.', 5000);
 }
@@ -1357,11 +1387,32 @@ async function submitRecette() {
   if (!et.length) return toast('Ajoutez les étapes de préparation.');
   const aliments = f.aliments.trim() || ingredients.filter(i => !enStock(i.n)).slice(0, 5).map(i => i.n.replace(/\(.*?\)/g, '').trim()).join(', ');
   S.busy = true; renderKeep();
+  const recette = Object.assign({}, f, { titre: f.titre.trim(), ingredients, etapes, aliments, saisons: saisonsTexte(f.saisons || []) });
+  if (S.editTitre) {
+    const ancien = S.editTitre;
+    try {
+      const res = await api('updateRecette', { titreOriginal: ancien, recette });
+      // le nouveau titre suit partout sur ce téléphone
+      const nv = res.titre;
+      if (nv !== ancien) {
+        menu.forEach(m => { if (m.titre === ancien) m.titre = nv; }); store.set('menu', menu);
+        ['fav', 'tester'].forEach(k => { perso[k] = perso[k].map(t => t === ancien ? nv : t); }); store.set('perso', perso);
+        if (cuisine && cuisine.titre === ancien) { cuisine.titre = nv; store.set('cuisine', cuisine); }
+      }
+      const prop = propositions.find(p => p.titre === ancien);
+      if (prop) { prop.titre = nv; prop.form = Object.assign({}, f, { titre: nv }); store.set('propositions', propositions); }
+      finirModif(); S.busy = false;
+      toast('Modifications enregistrées.');
+      await refresh(true);
+      if (rec(nv)) go('recipe', { titre: nv }); else go(prop ? 'moi' : 'list');
+    } catch (e) { S.busy = false; renderKeep(); toast(e.message, 6000); }
+    return;
+  }
   try {
-    const res = await api('addRecette', { recette: Object.assign({}, f, { titre: f.titre.trim(), ingredients, etapes, aliments, saisons: saisonsTexte(f.saisons || []) }) });
+    const res = await api('addRecette', { recette });
     brouillon = null; store.set('brouillon', null);
     if (res.statut === A_VALIDER) {
-      propositions.push({ titre: res.titre, date: dateFr() }); store.set('propositions', propositions);
+      propositions.push({ titre: res.titre, date: dateFr(), form: Object.assign({}, f) }); store.set('propositions', propositions);
       toast('Merci ! La recette apparaîtra après validation par ' + OWNER + '.', 5000);
     } else toast('Recette publiée 🎉');
     S.busy = false;
@@ -1386,7 +1437,7 @@ function renderMoi() {
         <input class="field" id="fCode" value="${esc(profil.code)}" autocomplete="off" autocapitalize="off" placeholder="Code famille">
         <button class="btn" data-act="saveProfil">Enregistrer</button>
       </section>
-      ${propositions.length ? `<section><h3>Mes recettes en attente</h3>${propositions.map((p, i) => `<div class="row"><div class="name">${esc(p.titre)}<small>Envoyée le ${esc(p.date)}</small></div><button class="x" data-act="propDel" data-i="${i}">✕</button></div>`).join('')}</section>` : ''}
+      ${propositions.length ? `<section><h3>Mes recettes en attente</h3>${propositions.map((p, i) => `<div class="row"><div class="name">${esc(p.titre)}<small>Envoyée le ${esc(p.date)}</small></div>${p.form ? `<button class="tog" data-act="propEdit" data-i="${i}">✏️ Modifier</button>` : ''}<button class="x" data-act="propDel" data-i="${i}">✕</button></div>`).join('')}</section>` : ''}
       <section>
         <h3>Toujours à la maison</h3>
         <div class="hint">Ces produits n'apparaissent pas dans la liste de courses et ne comptent pas comme manquants dans « Avec ce que j'ai ».</div>
@@ -1444,7 +1495,7 @@ function welcome() {
 /* ---------- Actions (un seul gestionnaire de clics) ---------- */
 const ACT = {
   retry: () => refresh(true),
-  tab: el => go(el.dataset.v),
+  tab: el => { if (S.editTitre) finirModif(); go(el.dataset.v); },
   open: el => { if (rec(el.dataset.t)) go('recipe', { titre: el.dataset.t }); },
   back: () => history.length > 1 ? history.back() : go('list'),
   filtre: el => { S.filtre = el.dataset.k; renderList(); },
@@ -1568,10 +1619,13 @@ const ACT = {
     f.saisonsAuto = false;
     if (s === 'toutes') f.saisons = NOMS_SAISONS.every(x => f.saisons.includes(x)) ? [] : NOMS_SAISONS.slice();
     else f.saisons = f.saisons.includes(s) ? f.saisons.filter(x => x !== s) : f.saisons.concat(s);
-    store.set('brouillon', f); renderSaisonsForm();
+    saveBrouillon(); renderSaisonsForm();
   },
-  fType: el => { const t = el.dataset.t; brouillon.types = brouillon.types.includes(t) ? brouillon.types.filter(x => x !== t) : brouillon.types.concat(t); store.set('brouillon', brouillon); el.classList.toggle('on'); },
+  fType: el => { const t = el.dataset.t; brouillon.types = brouillon.types.includes(t) ? brouillon.types.filter(x => x !== t) : brouillon.types.concat(t); saveBrouillon(); el.classList.toggle('on'); },
   submitRecette: () => submitRecette(),
+  modifier: () => { const r = rec(S.open); if (r) commencerModif(r.titre, formDepuisRecette(r)); },
+  propEdit: el => { const p = propositions[+el.dataset.i]; if (p && p.form) commencerModif(p.titre, JSON.parse(JSON.stringify(p.form))); },
+  annulerModif: () => { const t = S.editTitre; finirModif(); if (rec(t)) go('recipe', { titre: t }); else go('moi'); },
   pdfPick: () => {
     const inp = $('pdfFile');
     inp.onchange = async () => {
@@ -1589,7 +1643,7 @@ const ACT = {
   decouper: () => { const t = $('texteBrut').value; if (t.trim().length < 20) return toast('Collez d\'abord le texte de la recette.'); remplirDepuisTexte(t); },
   clearForm: () => {
     if (S.confirm !== 'form') { S.confirm = 'form'; return renderKeep(); }
-    S.confirm = null; brouillon = blankForm(); store.set('brouillon', brouillon); renderKeep();
+    S.confirm = null; brouillon = blankForm(); saveBrouillon(); renderKeep();
   },
   saveProfil: () => saveProfil(),
   propDel: el => { propositions.splice(+el.dataset.i, 1); store.set('propositions', propositions); renderKeep(); },

@@ -60,6 +60,7 @@ const ACTIONS = {
   data: req => { const r = role_(req.code); noterVisite_(req.auteur, r); return getData_(r); },
   role: req => ({ role: role_(req.code) }),
   addRecette: req => addRecette_(req),
+  updateRecette: req => updateRecette_(req),
   addComment: req => addComment_(req),
   deleteComment: req => deleteComment_(req),
   saveAvis: req => saveAvis_(req),
@@ -279,6 +280,79 @@ function addRecette_(req) {
     si.getRange(start, 7, ings.length, 1).setValues(ings.map(i => [rayonDe[norm_(i.n)] || 'Autres']));
     SpreadsheetApp.flush();
     return { titre, statut: ligne[C.statut - 1] };
+  });
+}
+
+/**
+ * Modifie une recette existante. Le propriétaire peut tout modifier ; un proche seulement
+ * sa propre proposition encore « À valider ». Note, commentaires, statut et analyse batch sont conservés.
+ * Les lignes d'ingrédients sont réécrites sur place (jamais supprimées, pour ne pas casser les formules du Sheet).
+ */
+function updateRecette_(req) {
+  const role = exiger_(req, 'famille');
+  const auteur = txt_(req.auteur, 40);
+  const ancien = txt_(req.titreOriginal, 150);
+  const r = req.recette || {};
+  const titre = txt_(r.titre, 150);
+  if (!titre) throw new Error('Le titre est obligatoire.');
+  const ings = (r.ingredients || []).slice(0, 80)
+    .map(i => ({ q: txt_(i.q, 20), u: txt_(i.u, 30), n: txt_(i.n, 120) }))
+    .filter(i => i.n);
+  if (!ings.length) throw new Error('Ajoutez au moins un ingrédient.');
+  const etapes = txt_(r.etapes, 10000);
+  if (!etapes) throw new Error('Ajoutez les étapes de préparation.');
+
+  return withLock_(() => {
+    const ss = ss_();
+    const sh = ss.getSheetByName('Recettes');
+    const row = findRecette_(sh, ancien);
+    if (row < 0) throw new Error('Recette introuvable : ' + ancien);
+    const cur = sh.getRange(row, 1, 1, NB_COL).getValues()[0];
+    if (role !== 'admin') {
+      if (String(cur[C.statut - 1]).trim() !== A_VALIDER) throw new Error('Cette recette est déjà publiée : seul le propriétaire du carnet peut la modifier.');
+      if (norm_(cur[C.par - 1]) !== norm_(auteur)) throw new Error('Vous ne pouvez modifier que vos propres propositions.');
+    }
+    if (titre !== ancien && findRecette_(sh, titre) > 0) throw new Error('Une autre recette porte déjà ce titre.');
+
+    const portions = parseInt(r.portions, 10);
+    const maj = {
+      titre: titre, typeSource: txt_(r.typeSource, 40), source: txt_(r.source, 300),
+      lien: /^https?:\/\//i.test(txt_(r.lien)) ? txt_(r.lien, 500) : '',
+      portions: portions >= 1 && portions <= 999 ? portions : '', unitePortions: txt_(r.unitePortions, 30) || 'personnes',
+      types: (r.types || []).map(t => txt_(t, 40)).filter(Boolean).join(', '),
+      aliments: txt_(r.aliments, 300), etapes: etapes, origine: txt_(r.origine, 20000), saisons: saisonsTexte_(r.saisons)
+    };
+    Object.keys(maj).forEach(k => { cur[C[k] - 1] = maj[k]; });
+    sh.getRange(row, 1, 1, NB_COL).setValues([cur]);
+
+    // Ingrédients : réécrits dans les lignes de l'ancienne recette, puis ajoutés à la suite si besoin
+    const si = ss.getSheetByName('Ingrédients');
+    const last = lastRowA_(si);
+    const lignes = [], rayonDe = {}, rayonRecette = {};
+    if (last > 1) si.getRange(2, 1, last - 1, 7).getDisplayValues().forEach((x, i) => {
+      if (x[3] && x[6]) rayonDe[norm_(x[3])] = x[6];
+      if (String(x[0]).trim() === ancien) { lignes.push(i + 2); if (x[3]) rayonRecette[norm_(x[3])] = x[6]; }
+    });
+    const valeur = i => { const q = String(i.q).replace(',', '.'); return /^\d+(\.\d+)?$/.test(q) ? Number(q) : i.q; };
+    const rayon = i => rayonRecette[norm_(i.n)] || rayonDe[norm_(i.n)] || 'Autres';
+    ings.forEach((i, k) => {
+      let rr = lignes[k];
+      if (!rr) { rr = lastRowA_(si) + 1; ensureRows_(si, rr); }
+      si.getRange(rr, 1, 1, 4).setValues([[titre, valeur(i), i.u, i.n]]);
+      si.getRange(rr, 7).setValue(rayon(i));
+    });
+    lignes.slice(ings.length).forEach(rr => { si.getRange(rr, 1, 1, 4).clearContent(); si.getRange(rr, 7).clearContent(); });
+
+    // Commentaires : suivent le nouveau titre
+    if (titre !== ancien) {
+      const sc = ss.getSheetByName(ONGLET_COMMENTAIRES);
+      if (sc && sc.getLastRow() > 1) {
+        const v = sc.getRange(2, 2, sc.getLastRow() - 1, 1).getValues();
+        v.forEach((x, i) => { if (String(x[0]).trim() === ancien) sc.getRange(i + 2, 2).setValue(titre); });
+      }
+    }
+    SpreadsheetApp.flush();
+    return { titre, statut: String(cur[C.statut - 1]).trim() };
   });
 }
 
