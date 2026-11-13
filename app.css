@@ -209,3 +209,6 @@ header h1{padding-right:46px}
 
 .eau{margin-top:6px;background:#e7f0f7;color:#24506f;border-radius:8px;padding:6px 9px;font-size:13px;line-height:1.35}
 .pas .eau{font-size:15px}
+
+section.auto{background:#f4f8f1;border-color:#d6e5cc}
+section.auto h3 .meta{font-weight:400}

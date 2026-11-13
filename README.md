@@ -26,3 +26,7 @@ Les codes ne sont jamais écrits dans ce dépôt public.
 - Onglet **Recettes** : colonnes A à O comme avant, plus **P Statut** (« À valider » pour les recettes proposées) et **Q Ajoutée par**.
 - Onglet **Commentaires** (créé automatiquement) : avis et notes des proches.
 - Favoris, « à tester », menu de la semaine, liste de courses, produits toujours à la maison et minuteurs sont enregistrés sur chaque téléphone.
+
+## Bibliothèques
+
+- `vendor/pdfjs/` : pdf.js (Mozilla, licence Apache 2.0), chargé seulement quand on importe un PDF dans l'onglet « Ajouter ». Le texte est extrait sur le téléphone, sans IA.

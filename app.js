@@ -1165,6 +1165,15 @@ function renderAdd() {
     <header><h1>Ajouter une recette</h1>
       <div class="meta">${isAdmin() ? 'Elle sera publiée directement.' : 'Elle sera visible par tous après validation par ' + esc(OWNER) + '.'}</div></header>
     <main>
+      <section class="auto">
+        <h3>Remplir automatiquement <span class="meta">sans IA</span></h3>
+        <button class="btn ghost" data-act="pdfPick" style="margin-top:0">📄 Importer un PDF</button>
+        <input type="file" id="pdfFile" accept="application/pdf,.pdf" hidden>
+        <label class="lbl">Ou collez le texte complet d'une recette</label>
+        <textarea class="field" id="texteBrut" rows="4" placeholder="Copié d'une page web, ou d'une photo avec « Texte en direct » (appui long sur le texte de la photo, puis Copier)"></textarea>
+        <button class="btn ghost" data-act="decouper">✂️ Découper et remplir le formulaire</button>
+        <div class="hint">Le texte est rangé grâce aux titres « Ingrédients » et « Préparation ». Vérifiez chaque champ ensuite.</div>
+      </section>
       <section>
         <label class="lbl">Titre *</label>
         <input class="field" data-f="titre" value="${esc(f.titre)}" placeholder="Ex : Tarte aux poireaux">
@@ -1225,6 +1234,91 @@ function renderSaisonsForm() {
       ? (sug.saisons.length ? '💡 Proposition d\'après les ingrédients (' + esc(sug.vus.slice(0, 4).join(', ')) + ') : vérifiez ou corrigez.' : 'Pas de proposition automatique : aucun ingrédient de saison reconnu. Choisissez, ou laissez vide.')
       : 'Si la recette indique une saison, reprenez-la.'}</div>`;
 }
+/* ---------- Remplissage automatique sans IA : PDF (pdf.js, sur le téléphone) et texte collé ---------- */
+let pdfjsLib = null;
+async function chargerPdfjs() {
+  if (pdfjsLib) return pdfjsLib;
+  pdfjsLib = await import('./vendor/pdfjs/pdf.min.mjs');
+  pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('vendor/pdfjs/pdf.worker.min.mjs', location.href).href;
+  return pdfjsLib;
+}
+async function texteDuPdf(file) {
+  const lib = await chargerPdfjs();
+  const pdf = await lib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+  const pages = [];
+  for (let p = 1; p <= Math.min(pdf.numPages, 10); p++) {
+    const tc = await (await pdf.getPage(p)).getTextContent();
+    // reconstitue les lignes d'après la position verticale des morceaux de texte
+    const lignes = [];
+    tc.items.forEach(it => {
+      if (!('str' in it)) return;
+      const y = Math.round(it.transform[5]), x = it.transform[4];
+      let l = lignes.find(l => Math.abs(l.y - y) <= 3);
+      if (!l) lignes.push(l = { y, parts: [] });
+      l.parts.push({ x, s: it.str });
+    });
+    lignes.sort((a, b) => b.y - a.y);
+    pages.push(lignes.map(l => l.parts.sort((a, b) => a.x - b.x).map(p => p.s).join(' ').replace(/\s+/g, ' ').trim()).filter(Boolean).join('\n'));
+  }
+  return pages.join('\n');
+}
+
+const RX_T_INGR = /^(les )?ingr[ée]dients?\b\s*:?/i;
+const RX_T_PREP = /^(pr[ée]paration|instructions?|[ée]tapes?|d[ée]roul[ée]|recette|la recette|m[ée]thode)\b\s*:?$/i;
+const RX_T_NOTES = /^(notes?|astuces?|conseils?|le petit plus|variantes?|conservation)\b\s*:?/i;
+const RX_T_AUTRE = /^(mat[ée]riel|ustensiles?|portions?|temps|rendement|nutrition|partager|imprimer)\b/i;
+function decouperRecette(brut) {
+  const lignes = String(brut).replace(/\r/g, '').split('\n').map(l => l.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  const r = { titre: '', portions: '', unite: '', temps: [], ingredients: [], etapes: [], notes: [], age: '', lien: '' };
+  // titre : une ligne répétée plus bas (cas des pages web), sinon la première ligne qui ressemble à un titre
+  const candidates = lignes.slice(0, 15).filter(l => l.length >= 4 && l.length <= 90 && !/^(https?:|dès|des \d|\d|temps|portions?|ingr|pr[ée]p|par |publi|mis à jour)/i.test(l));
+  r.titre = candidates.find(l => lignes.filter(x => x === l).length > 1) || candidates[0] || '';
+  let zone = null;
+  lignes.forEach(l => {
+    let m;
+    if ((m = l.match(/https?:\/\/\S+/)) && !r.lien) r.lien = m[0];
+    if ((m = l.match(/\bd[èe]s\s+(\d+(?:\s*-\s*\d+)?)\s*mois\b/i)) && !r.age) r.age = 'dès ' + m[1] + ' mois';
+    if ((m = l.match(/^(?:portions?|pour|rendement|quantit[ée])\s*:?\s*(\d+)\s*(.*)$/i)) && !r.portions) { r.portions = m[1]; r.unite = m[2].replace(/\(s\)/g, 's').replace(/[.:]$/, '').trim(); return; }
+    if ((m = l.match(/^(?:pour\s+)?(\d+)\s+(personnes?|parts?|portions?|pi[èe]ces?)\b/i)) && !r.portions) { r.portions = m[1]; r.unite = m[2]; }
+    if (/^temps\b|^(pr[ée]paration|cuisson|repos)\s*:\s*\d/i.test(l)) { r.temps.push(l.replace(/^temps\s*:\s*/i, '').replace(/^temps\s+de\s+/i, '').replace(/\s*:\s*/, ' : ')); return; }
+    if (RX_T_INGR.test(l) && l.replace(RX_T_INGR, '').trim().length < 3) { zone = 'ingr'; return; }
+    if (RX_T_PREP.test(l)) { zone = 'prep'; return; }
+    if (RX_T_NOTES.test(l) && l.length < 30) { zone = 'notes'; return; }
+    if (RX_T_AUTRE.test(l) && l.length < 30) { zone = null; return; }
+    if (l === r.titre) return;
+    if (zone === 'ingr') { if (!/:$/.test(l)) r.ingredients.push(l.replace(/\((s|x|es)\)/g, '')); }   // « Pour la pâte : » = sous-titre
+    else if (zone === 'prep') {
+      const nouvelle = /^(\d+\s*[.)-]|étape\s*\d+|[-–•*])/i.test(l);
+      if (/^étape\s*\d+\s*:?$/i.test(l)) { r.etapes.push(''); return; }
+      if (!nouvelle && r.etapes.length && !/[.!?:]$/.test(r.etapes[r.etapes.length - 1])) r.etapes[r.etapes.length - 1] += (r.etapes[r.etapes.length - 1] ? ' ' : '') + l;
+      else r.etapes.push(l.replace(/^étape\s*\d+\s*:?\s*/i, ''));
+    } else if (zone === 'notes' && !/^https?:\/\/\S+$/.test(l)) r.notes.push(l);
+  });
+  r.etapes = r.etapes.map(s => s.trim()).filter(Boolean);
+  return r;
+}
+function remplirDepuisTexte(brut, origine) {
+  const d = decouperRecette(brut);
+  if (!d.ingredients.length && !d.etapes.length) {
+    toast('Je n\'ai pas trouvé les titres « Ingrédients » et « Préparation » : le texte est mis dans « Texte d\'origine », à répartir à la main.', 6000);
+  }
+  const f = brouillon || (brouillon = blankForm());
+  if (d.titre) f.titre = d.titre;
+  if (d.portions) { f.portions = d.portions; if (d.unite) f.unitePortions = d.unite; }
+  if (d.ingredients.length) f.ingredients = d.ingredients.join('\n');
+  if (d.etapes.length || d.temps.length) f.etapes = d.temps.map(t => 'Temps : ' + t).concat(d.etapes, d.notes.map(n => /^(note|astuce|conseil|conservation|variante)/i.test(n) ? n : 'Note : ' + n)).join('\n');
+  if (d.lien && !f.lien) f.lien = d.lien;
+  if (d.age) {
+    if (!f.types.includes('Bébé')) f.types.push('Bébé');
+    if (!/d[èe]s \d/.test(f.source)) f.source = (f.source ? f.source + ', ' : '') + d.age;
+  }
+  f.origine = String(origine || brut).trim();
+  f.saisonsAuto = true;
+  store.set('brouillon', f); S.confirm = null;
+  renderKeep();
+  if (d.ingredients.length || d.etapes.length) toast('Formulaire rempli : ' + d.ingredients.length + ' ingrédients, ' + d.etapes.length + ' étapes. Vérifiez chaque champ.', 5000);
+}
+
 function parsedIngredients() {
   return String((brouillon || {}).ingredients || '').split('\n').map(parseIngredientLine).filter(Boolean);
 }
@@ -1236,8 +1330,10 @@ async function submitRecette() {
   const f = brouillon;
   const ingredients = parsedIngredients();
   const lignes = String(f.etapes || '').split('\n').map(s => s.trim().replace(/^(\d+\s*[.)-]|[-–•*])\s*/, '')).filter(Boolean);
-  const temps = lignes.filter(l => /^temps\s*:/i.test(l)), et = lignes.filter(l => !/^temps\s*:/i.test(l));
-  const etapes = temps.concat(et.map((l, i) => (i + 1) + '. ' + l)).join('\n');
+  const RX_NOTE = /^(note|astuce|conseil|conservation|variante|petit conseil)s?\b/i;
+  const temps = lignes.filter(l => /^temps\s*:/i.test(l)), notes = lignes.filter(l => RX_NOTE.test(l));
+  const et = lignes.filter(l => !/^temps\s*:/i.test(l) && !RX_NOTE.test(l));
+  const etapes = temps.concat(et.map((l, i) => (i + 1) + '. ' + l), notes).join('\n');
   if (!f.titre.trim()) return toast('Le titre est obligatoire.');
   if (!ingredients.length) return toast('Ajoutez au moins un ingrédient.');
   if (!et.length) return toast('Ajoutez les étapes de préparation.');
@@ -1458,6 +1554,21 @@ const ACT = {
   },
   fType: el => { const t = el.dataset.t; brouillon.types = brouillon.types.includes(t) ? brouillon.types.filter(x => x !== t) : brouillon.types.concat(t); store.set('brouillon', brouillon); el.classList.toggle('on'); },
   submitRecette: () => submitRecette(),
+  pdfPick: () => {
+    const inp = $('pdfFile');
+    inp.onchange = async () => {
+      const file = inp.files[0]; if (!file) return;
+      toast('Lecture du PDF…', 8000);
+      try {
+        const t = await texteDuPdf(file);
+        if (t.replace(/\s/g, '').length < 40) return toast('Ce PDF ne contient pas de texte (c\'est sans doute un scan) : utilisez « Texte en direct » sur une capture, ou l\'import par IA.', 7000);
+        remplirDepuisTexte(t);
+      } catch (e) { toast('Impossible de lire ce PDF : ' + (e && e.message ? e.message : e), 6000); }
+      inp.value = '';
+    };
+    inp.click();
+  },
+  decouper: () => { const t = $('texteBrut').value; if (t.trim().length < 20) return toast('Collez d\'abord le texte de la recette.'); remplirDepuisTexte(t); },
   clearForm: () => {
     if (S.confirm !== 'form') { S.confirm = 'form'; return renderKeep(); }
     S.confirm = null; brouillon = blankForm(); store.set('brouillon', brouillon); renderKeep();
