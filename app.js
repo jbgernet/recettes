@@ -15,7 +15,8 @@ const store = {
 let DATA = store.get('data', null);
 let profil = store.get('profil', { prenom: '', code: '', role: null });
 let perso = store.get('perso', { fav: [], tester: [] });
-let menu = store.get('menu', []);            // [{id, titre, portions, jour}]
+let menu = store.get('menu', []);            // [{id, titre, portions, jour}] ; repas sans recette : {id, titre, libre: true, jour}
+const menuR = () => menu.filter(m => !m.libre);
 let produits = store.get('produits', []);    // [{nom, rayon}]
 let coches = store.get('coches', []);
 let stock = store.get('stock', ['sel', 'poivre', 'eau', "huile d'olive"]);
@@ -358,7 +359,7 @@ function go(view, opts) {
   S.view = view; S.confirm = null;
   if (view === 'recipe') {
     S.open = opts.titre;
-    const r = rec(S.open), m = menu.find(x => x.titre === S.open);
+    const r = rec(S.open), m = menuR().find(x => x.titre === S.open);
     S.portions = (m && num(m.portions)) || num(r.portions);
     S.done = {}; S.avisDirty = false; S.comNote = 0;
     if (cuisine && cuisine.titre === S.open && Date.now() - cuisine.ts < 12 * 3600e3) {
@@ -464,7 +465,7 @@ function frigoClasse(list) {
 function cardHtml(r, extra) {
   const nb = comsDe(r.titre).length;
   const icons = [perso.fav.includes(r.titre) ? '♥' : '', perso.tester.includes(r.titre) ? '🔖' : '',
-    menu.some(m => m.titre === r.titre) ? '🛒' : '', nb ? '💬' + nb : ''].filter(Boolean).join(' ');
+    menuR().some(m => m.titre === r.titre) ? '🛒' : '', nb ? '💬' + nb : ''].filter(Boolean).join(' ');
   return `<div class="card ${r.statut === A_VALIDER ? 'pending' : ''}" data-act="open" data-t="${esc(r.titre)}">
     <h2>${esc(r.titre)}</h2>
     <div class="meta">${r.statut === A_VALIDER ? '<b style="color:var(--accent)">À valider</b> · proposée par ' + esc(r.par) + ' · ' : ''}${stars(r.note)} ${esc(r.types.slice(0, 3).join(' · '))}${saisonsCourt(r) ? ' · <span class="ssn">' + esc(saisonsCourt(r)) + '</span>' : ''}<span class="icons">${icons ? ' · ' + icons : ''}</span></div>
@@ -648,7 +649,7 @@ function renderRecipe() {
   const motsR = motsIngredients(r);
   const adapte = Math.abs(ratio - 1) > 0.001;
   const isUrl = s => /^https?:\/\//i.test(String(s || '').trim());
-  const m = menu.find(x => x.titre === r.titre);
+  const m = menuR().find(x => x.titre === r.titre);
   const coms = comsDe(r.titre);
   const notesProches = coms.map(c => num(c.note)).filter(Boolean);
   const moy = notesProches.length ? notesProches.reduce((a, b) => a + b, 0) / notesProches.length : 0;
@@ -860,7 +861,7 @@ async function wake() {
 
 /* ---------- Menu de la semaine ---------- */
 function menuSheet(titre) {
-  const r = rec(titre), m = menu.find(x => x.titre === titre);
+  const r = rec(titre), m = menuR().find(x => x.titre === titre);
   openModal(`
     <h2>${m ? 'Au menu' : 'Ajouter au menu'}</h2>
     <div class="meta">${esc(titre)}</div>
@@ -871,12 +872,12 @@ function menuSheet(titre) {
 }
 function setJour(j) {
   const titre = S.sheetTitre, r = rec(titre);
-  let m = menu.find(x => x.titre === titre);
+  let m = menuR().find(x => x.titre === titre);
   const base = num(r && r.portions);
   if (m) { m.jour = j; if (S.view === 'recipe' && base) m.portions = S.portions; }
   else menu.push({ id: uid(), titre, portions: base ? (S.view === 'recipe' ? S.portions : base) : '', jour: j });
   store.set('menu', menu); closeModal(); renderKeep();
-  const n = suggestionsBatch(menu.map(x => x.titre), 5).length;
+  const n = suggestionsBatch(menuR().map(x => x.titre), 5).length;
   toast('Ajouté au menu : ' + jourNom(j) + '.' + (n ? ' 💡 ' + n + ' idée' + (n > 1 ? 's' : '') + ' de batch cooking dans Menu & courses.' : ' La liste de courses est à jour.'), 4500);
 }
 
@@ -981,7 +982,7 @@ function liensPreps(pa, pb) {
 function suggestionsBatch(seeds, max) {
   const base = seeds.map(rec).filter(Boolean);
   if (!base.length) return [];
-  const pris = new Set(menu.map(m => m.titre).concat(batchIgnore));
+  const pris = new Set(menuR().map(m => m.titre).concat(batchIgnore));
   const pa = base.map(profilBatch), preA = base.map(prepsDe);
   return DATA.recettes.filter(r => r.statut !== A_VALIDER && !pris.has(r.titre) && !seeds.includes(r.titre)).map(r => {
     const p = profilBatch(r), preB = prepsDe(r);
@@ -1036,7 +1037,7 @@ function batchHtml(list, titre) {
 const itemKey = (rayon, nom, unite) => [rayon, nom, unite].map(norm).join('|');
 function computeCourses() {
   const items = {};
-  menu.forEach(sel => {
+  menuR().forEach(sel => {
     const r = rec(sel.titre);
     const base = r ? num(r.portions) : null, p = num(sel.portions);
     const coef = base && p ? p / base : 1;
@@ -1077,7 +1078,7 @@ function renderCourses() {
   const total = groups.reduce((s, g) => s + g.items.length, 0);
   const restants = groups.reduce((s, g) => s + g.items.filter(i => !set.has(i.k)).length, 0);
   const plusieurs = menu.length > 1;
-  const titres = DATA.recettes.filter(r => r.statut !== A_VALIDER && !menu.some(m => m.titre === r.titre)).map(r => r.titre).sort((a, b) => a.localeCompare(b, 'fr'));
+  const titres = DATA.recettes.filter(r => r.statut !== A_VALIDER && !menuR().some(m => m.titre === r.titre)).map(r => r.titre).sort((a, b) => a.localeCompare(b, 'fr'));
   const parJour = JOURS.map(([j, l]) => ({ j, l, items: menu.filter(m => (m.jour || '') === j) })).filter(x => x.items.length);
 
   $('app').innerHTML = `
@@ -1088,6 +1089,10 @@ function renderCourses() {
       <section>
         <h3>Menu de la semaine</h3>
         ${parJour.length ? parJour.map(d => `<div class="day">${d.l}</div>` + d.items.map(m => {
+          if (m.libre) return `<div class="row menu libre">
+            <div class="name">✏️ ${esc(m.titre)}<small>Sans recette</small></div>
+            <select data-act="mJour" data-id="${m.id}">${JOURS.map(([j, l]) => `<option value="${j}" ${m.jour === j ? 'selected' : ''}>${l.slice(0, 3)}${j ? '.' : ''}</option>`).join('')}</select>
+            <button class="x" data-act="mDel" data-id="${m.id}">✕</button></div>`;
           const r = rec(m.titre), base = r ? num(r.portions) : null, p = num(m.portions) || base;
           return `<div class="row menu">
             <div class="name" data-act="open" data-t="${esc(m.titre)}">${esc(m.titre)}${r ? '' : '<small>Recette introuvable</small>'}</div>
@@ -1100,7 +1105,12 @@ function renderCourses() {
           <select class="field" id="addJ" style="flex:0 0 30%">${JOURS.map(([j, l]) => `<option value="${j}">${l}</option>`).join('')}</select>
           <button class="go" data-act="addMenu">＋</button>
         </div>
-        ${batchHtml(suggestionsBatch(menu.map(x => x.titre), 5), 'Idées batch cooking : à cuisiner en même temps')}
+        <div class="add">
+          <input class="field" id="addLibre" placeholder="✏️ Repas sans recette" enterkeyhint="done">
+          <select class="field" id="addLibreJ" style="flex:0 0 30%">${JOURS.map(([j, l]) => `<option value="${j}" ${S.libreJour === j ? 'selected' : ''}>${l}</option>`).join('')}</select>
+          <button class="go" data-act="addLibre">＋</button>
+        </div>
+        ${batchHtml(suggestionsBatch(menuR().map(x => x.titre), 5), 'Idées batch cooking : à cuisiner en même temps')}
       </section>
 
       <section>
@@ -1131,6 +1141,7 @@ function renderCourses() {
       ${menu.length || produits.length ? `<button class="btn ghost" data-act="newWeek">${S.confirm === 'week' ? 'Touchez encore pour tout effacer' : 'Nouvelle semaine (vider le menu et la liste)'}</button>` : ''}
     </main>`;
   $('pNom').onkeydown = e => { if (e.key === 'Enter') ACT.pAdd(); };
+  $('addLibre').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); ACT.addLibre(); } };
 }
 
 function shareText() {
@@ -1395,7 +1406,7 @@ async function submitRecette() {
       // le nouveau titre suit partout sur ce téléphone
       const nv = res.titre;
       if (nv !== ancien) {
-        menu.forEach(m => { if (m.titre === ancien) m.titre = nv; }); store.set('menu', menu);
+        menuR().forEach(m => { if (m.titre === ancien) m.titre = nv; }); store.set('menu', menu);
         ['fav', 'tester'].forEach(k => { perso[k] = perso[k].map(t => t === ancien ? nv : t); }); store.set('perso', perso);
         if (cuisine && cuisine.titre === ancien) { cuisine.titre = nv; store.set('cuisine', cuisine); }
       }
@@ -1522,7 +1533,7 @@ const ACT = {
   wake: () => { S.wake = !S.wake; wake(); renderKeep(); toast(S.wake ? 'L\'écran restera allumé sur cette recette.' : 'Mise en veille normale.'); },
   menuSheet: () => menuSheet(S.open),
   setJour: el => setJour(el.dataset.j),
-  unmenu: () => { menu = menu.filter(m => m.titre !== S.sheetTitre); store.set('menu', menu); closeModal(); renderKeep(); },
+  unmenu: () => { menu = menu.filter(m => m.libre || m.titre !== S.sheetTitre); store.set('menu', menu); closeModal(); renderKeep(); },
   closeModal: () => closeModal(),
   overlay: (el, e) => { if (e.target === el) closeModal(); },
   pas: () => {
@@ -1578,6 +1589,12 @@ const ACT = {
   addMenu: () => {
     const t = $('addR').value; if (!t) return toast('Choisissez une recette.');
     const r = rec(t); menu.push({ id: uid(), titre: t, portions: num(r.portions) || '', jour: $('addJ').value });
+    store.set('menu', menu); renderKeep();
+  },
+  addLibre: () => {
+    const t = $('addLibre').value.trim(); if (!t) return toast('Écrivez le repas, par exemple « Soles du marché ».');
+    S.libreJour = $('addLibreJ').value;
+    menu.push({ id: uid(), titre: t.slice(0, 80), libre: true, jour: S.libreJour });
     store.set('menu', menu); renderKeep();
   },
   mPortions: el => {

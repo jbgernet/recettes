@@ -212,3 +212,5 @@ header h1{padding-right:46px}
 
 section.auto{background:#f4f8f1;border-color:#d6e5cc}
 section.auto h3 .meta{font-weight:400}
+.row.menu.libre .name{cursor:default}
+.row.menu.libre select{margin-left:auto}
