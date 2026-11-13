@@ -1168,6 +1168,7 @@ function renderAdd() {
       <section class="auto">
         <h3>Remplir automatiquement <span class="meta">sans IA</span></h3>
         <button class="btn ghost" data-act="pdfPick" style="margin-top:0">📄 Importer un PDF</button>
+        ${S.pdfDessine ? `<div class="adapt" style="margin-top:8px">Ce PDF n'a pas de texte lisible (il a sans doute été créé avec « Microsoft Print to PDF », qui dessine les lettres). Plus simple : <b>sélectionnez tout le texte de la page web et collez-le ci-dessous</b>. Sinon, créez le PDF avec « Enregistrer au format PDF » de Chrome ou Edge, ou depuis l'iPhone (Partager → Imprimer → Partager), qui gardent le texte. Ou faites une capture et utilisez « Texte en direct ».</div>` : ''}
         <input type="file" id="pdfFile" accept="application/pdf,.pdf" hidden>
         <label class="lbl">Ou collez le texte complet d'une recette</label>
         <textarea class="field" id="texteBrut" rows="4" placeholder="Copié d'une page web, ou d'une photo avec « Texte en direct » (appui long sur le texte de la photo, puis Copier)"></textarea>
@@ -1273,6 +1274,11 @@ function decouperRecette(brut) {
   // titre : une ligne répétée plus bas (cas des pages web), sinon la première ligne qui ressemble à un titre
   const candidates = lignes.slice(0, 15).filter(l => l.length >= 4 && l.length <= 90 && !/^(https?:|dès|des \d|\d|temps|portions?|ingr|pr[ée]p|par |publi|mis à jour)/i.test(l));
   r.titre = candidates.find(l => lignes.filter(x => x === l).length > 1) || candidates[0] || '';
+  // titre coupé en deux lignes (« Falafels au chou kale et sa petite » / « sauce citronnée »)
+  const it = lignes.indexOf(r.titre), suite = lignes[it + 1];
+  if (it >= 0 && suite && /^[a-zà-ÿœ]/.test(suite) && suite.length < 60 && !/[:.]$/.test(r.titre) && !/^(\d|pour |dès )/i.test(suite)) {
+    r.titre += ' ' + suite; lignes.splice(it + 1, 1);
+  }
   let zone = null;
   lignes.forEach(l => {
     let m;
@@ -1280,13 +1286,15 @@ function decouperRecette(brut) {
     if ((m = l.match(/\bd[èe]s\s+(\d+(?:\s*-\s*\d+)?)\s*mois\b/i)) && !r.age) r.age = 'dès ' + m[1] + ' mois';
     if ((m = l.match(/^(?:portions?|pour|rendement|quantit[ée])\s*:?\s*(\d+)\s*(.*)$/i)) && !r.portions) { r.portions = m[1]; r.unite = m[2].replace(/\(s\)/g, 's').replace(/[.:]$/, '').trim(); return; }
     if ((m = l.match(/^(?:pour\s+)?(\d+)\s+(personnes?|parts?|portions?|pi[èe]ces?)\b/i)) && !r.portions) { r.portions = m[1]; r.unite = m[2]; }
+    // « 12 falafels » seul sur une ligne, en tête de recette, avant les ingrédients
+    if (!zone && !r.portions && (m = l.match(/^(\d+)\s+([a-zà-ÿœ][a-zà-ÿœ' -]{2,24})$/i)) && lignes.indexOf(l) < 6) { r.portions = m[1]; r.unite = m[2].replace(/\(s\)/g, 's'); return; }
     if (/^temps\b|^(pr[ée]paration|cuisson|repos)\s*:\s*\d/i.test(l)) { r.temps.push(l.replace(/^temps\s*:\s*/i, '').replace(/^temps\s+de\s+/i, '').replace(/\s*:\s*/, ' : ')); return; }
     if (RX_T_INGR.test(l) && l.replace(RX_T_INGR, '').trim().length < 3) { zone = 'ingr'; return; }
     if (RX_T_PREP.test(l)) { zone = 'prep'; return; }
     if (RX_T_NOTES.test(l) && l.length < 30) { zone = 'notes'; return; }
     if (RX_T_AUTRE.test(l) && l.length < 30) { zone = null; return; }
     if (l === r.titre) return;
-    if (zone === 'ingr') { if (!/:$/.test(l)) r.ingredients.push(l.replace(/\((s|x|es)\)/g, '')); }   // « Pour la pâte : » = sous-titre
+    if (zone === 'ingr') { if (!/:$/.test(l) && !/^pour (les?|la|l'|un|une|des) /i.test(l)) r.ingredients.push(l.replace(/\((s|x|es)\)/g, '')); }   // « Pour la pâte » = sous-titre
     else if (zone === 'prep') {
       const nouvelle = /^(\d+\s*[.)-]|étape\s*\d+|[-–•*])/i.test(l);
       if (/^étape\s*\d+\s*:?$/i.test(l)) { r.etapes.push(''); return; }
@@ -1299,6 +1307,16 @@ function decouperRecette(brut) {
 }
 function remplirDepuisTexte(brut, origine) {
   const d = decouperRecette(brut);
+  const titresVus = /ingr[ée]dients/i.test(brut) && /(instructions|pr[ée]paration)/i.test(brut);
+  if (titresVus && d.ingredients.length + d.etapes.length < 3) {
+    toast('Ce PDF ne contient que les titres en texte : le reste (ingrédients, étapes) y est dessiné, pas écrit, et ne peut pas être lu sans reconnaissance d\'image. Voir l\'aide sous le bouton.', 9000);
+    S.pdfDessine = true;
+    const f = brouillon || (brouillon = blankForm());
+    if (d.titre) f.titre = d.titre;
+    if (d.portions) { f.portions = d.portions; if (d.unite) f.unitePortions = d.unite; }
+    store.set('brouillon', f); renderKeep(); return;
+  }
+  S.pdfDessine = false;
   if (!d.ingredients.length && !d.etapes.length) {
     toast('Je n\'ai pas trouvé les titres « Ingrédients » et « Préparation » : le texte est mis dans « Texte d\'origine », à répartir à la main.', 6000);
   }
