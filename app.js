@@ -73,7 +73,7 @@ function parseQty(s) {
   if ((m = s.match(/^(\d+)?\s*([½¼¾⅓⅔])$/))) return { a: (+m[1] || 0) + FRACS[m[2]] };
   if ((m = s.match(/^(\d+)\s+(\d+)\/(\d+)$/))) return { a: +m[1] + m[2] / m[3] };
   if ((m = s.match(/^(\d+)\/(\d+)$/))) return { a: m[1] / m[2] };
-  if ((m = s.match(/^(\d+(?:\.\d+)?)\s*(?:-|à)\s*(\d+(?:\.\d+)?)$/))) return { a: +m[1], b: +m[2] };
+  if ((m = s.match(/^(\d+(?:\.\d+)?)\s*(?:[-–—]|à)\s*(\d+(?:\.\d+)?)$/))) return { a: +m[1], b: +m[2] };
   if (/^\d*\.?\d+$/.test(s)) return { a: +s };
   return { raw: s };
 }
@@ -125,7 +125,7 @@ function arrondi(v, unite, nom) {
 }
 // Quantités écrites dans un texte (étapes, précisions entre parenthèses) : « 200 g », « 2 c. à soupe », « 3 œufs »…
 const RX_UNITES_TXT = 'kg|g|mg|ml|cl|dl|l|c\\.?\\s*à\\s*(?:soupe|café|cafe)|cuill[eè]res?\\s*à\\s*(?:soupe|café|cafe)|càs|càc|pincées?|gousses?|tranches?|feuilles?|brins?|poignées?|sachets?|boîtes?|verres?|tasses?|bottes?|branches?|cubes?|pots?|briquettes?';
-const RX_QTE_TXT = new RegExp('(?<![\\d/.,])(\\d+\\/\\d+|\\d+(?:[.,]\\d+)?|[½¼¾])(?:(\\s*(?:à|-)\\s*)(\\d+(?:[.,]\\d+)?))?(\\s*)(' + RX_UNITES_TXT + ')(?![a-zà-ÿ])'
+const RX_QTE_TXT = new RegExp('(?<![\\d/.,])(\\d+\\/\\d+|\\d+(?:[.,]\\d+)?|[½¼¾])(?:(\\s*(?:à|[-–—])\\s*)(\\d+(?:[.,]\\d+)?))?(\\s*)(' + RX_UNITES_TXT + ')(?![a-zà-ÿ])'
   + '|(?<![\\d/.,°])(\\d+(?:[.,]\\d+)?|[½¼¾])(\\s+)((?:gros |grosses |petits? |petites |belles? |beaux )?)([a-zà-ÿœ\'’-]+)', 'gi');
 const valeurTxt = s => { const p = parseQty(String(s).replace(',', '.')); return p && p.raw == null ? p.a : null; };
 function adapterTexte(texte, ratio, mots) {
@@ -260,11 +260,13 @@ const UNITES = [
 ];
 const UNITES_FLAT = UNITES.flatMap(([u, vs]) => vs.map(v => [v, u])).sort((a, b) => b[0].length - a[0].length);
 
+// Puces et cases à cocher copiées depuis les sites (▢ 800 g…) : à retirer avant de lire la quantité
+const RX_PUCES = /^[\s\-–—•*·▪▫●◦○>▢☐□◻◽◼■☑✓✔✅✗➢➤▶►‣⁃→]+/u;
 function parseIngredientLine(line) {
-  let s = String(line).replace(/^[\s\-–—•*·▪●◦>]+/, '').replace(/\s+/g, ' ').trim();
+  let s = String(line).replace(RX_PUCES, '').replace(/\s+/g, ' ').trim();
   if (!s) return null;
   let q = '';
-  const mq = s.match(/^(\d+\s+\d+\/\d+|\d+(?:[.,]\d+)?\s*[½¼¾⅓⅔]|\d+\/\d+|\d+(?:[.,]\d+)?(?:\s*(?:-|à)\s*\d+(?:[.,]\d+)?)?|[½¼¾⅓⅔])/);
+  const mq = s.match(/^(\d+\s+\d+\/\d+|\d+(?:[.,]\d+)?\s*[½¼¾⅓⅔]|\d+\/\d+|\d+(?:[.,]\d+)?(?:\s*(?:[-–—]|à)\s*\d+(?:[.,]\d+)?)?|[½¼¾⅓⅔])/);
   if (mq) {
     const p = parseQty(mq[1].replace(/\s+/g, ' '));
     if (p && p.raw == null) q = p.b != null ? mq[1].replace(',', '.').replace(/\s+/g, ' ') : String(Math.round(p.a * 1000) / 1000);
@@ -304,6 +306,19 @@ async function api(action, payload) {
   return j.data;
 }
 
+// Filet de sécurité : si une quantité est restée collée au nom (« ▢ 800 g gnocchis », quantité vide),
+// on la relit pour que les portions s'appliquent quand même
+function reparerIngredients(d) {
+  const ancien = DATA; DATA = d;   // parseIngredientLine consulte DATA.pluriels
+  Object.values(d.ingredients || {}).forEach(liste => liste.forEach(g => {
+    if (String(g.q || '').trim() || String(g.u || '').trim()) return;
+    const brut = String(g.n || '');
+    if (!RX_PUCES.test(brut) && !/^\s*[\d½¼¾⅓⅔]/.test(brut)) return;
+    const p = parseIngredientLine(brut);
+    if (p) { g.q = p.q; g.u = p.u; g.n = p.n; }
+  }));
+  DATA = ancien;
+}
 let lastRefresh = 0, refreshing = false;
 async function refresh(force) {
   if (refreshing || (!force && Date.now() - lastRefresh < 20000)) return;
@@ -312,6 +327,7 @@ async function refresh(force) {
     const d = await api('data');
     lastRefresh = Date.now();
     if (profil.code && d.role !== profil.role) { profil.role = d.role; store.set('profil', profil); }
+    reparerIngredients(d);
     DATA = d; store.set('data', d);
     const avant = propositions.length;
     propositions = propositions.filter(p => !d.recettes.some(r => r.titre === p.titre && r.statut !== A_VALIDER));
@@ -1388,7 +1404,7 @@ function renderPreview() {
 async function submitRecette() {
   const f = brouillon;
   const ingredients = parsedIngredients();
-  const lignes = String(f.etapes || '').split('\n').map(s => s.trim().replace(/^(\d+\s*[.)-]|[-–•*])\s*/, '')).filter(Boolean);
+  const lignes = String(f.etapes || '').split('\n').map(s => s.replace(RX_PUCES, '').trim().replace(/^(\d+\s*[.)-]|[-–•*])\s*/, '')).filter(Boolean);
   const RX_NOTE = /^(note|astuce|conseil|conservation|variante|petit conseil)s?\b/i;
   const temps = lignes.filter(l => /^temps\s*:/i.test(l)), notes = lignes.filter(l => RX_NOTE.test(l));
   const et = lignes.filter(l => !/^temps\s*:/i.test(l) && !RX_NOTE.test(l));
@@ -1728,7 +1744,7 @@ setTimeout(verifierMaj, 3000);
 
 /* ---------- Démarrage ---------- */
 history.replaceState({ view: 'list' }, '');
-if (DATA) { render(); restaurerCuisine(); }
+if (DATA) { reparerIngredients(DATA); render(); restaurerCuisine(); }
 refresh(true).then(() => { restaurerCuisine(); if (DATA && !profil.prenom && !$('modal').innerHTML && !S.pas) welcome(); });
 if (timers.length) tick();
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
