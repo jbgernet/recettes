@@ -1095,6 +1095,8 @@ function renderCourses() {
   const restants = groups.reduce((s, g) => s + g.items.filter(i => !set.has(i.k)).length, 0);
   const plusieurs = menu.length > 1;
   const titres = DATA.recettes.filter(r => r.statut !== A_VALIDER && !menuR().some(m => m.titre === r.titre)).map(r => r.titre).sort((a, b) => a.localeCompare(b, 'fr'));
+  // Pour chaque recette du menu : combien d'ingrédients restent à acheter
+  const resteDe = t => { let n = 0, tot = 0; groups.forEach(g => g.items.forEach(i => { if (i.de.includes(t)) { tot++; if (!set.has(i.k)) n++; } })); return { n, tot }; };
   const parJour = JOURS.map(([j, l]) => ({ j, l, items: menu.filter(m => (m.jour || '') === j) })).filter(x => x.items.length);
 
   $('app').innerHTML = `
@@ -1111,7 +1113,7 @@ function renderCourses() {
             <button class="x" data-act="mDel" data-id="${m.id}">✕</button></div>`;
           const r = rec(m.titre), base = r ? num(r.portions) : null, p = num(m.portions) || base;
           return `<div class="row menu">
-            <div class="name" data-act="open" data-t="${esc(m.titre)}">${esc(m.titre)}${r ? '' : '<small>Recette introuvable</small>'}</div>
+            <div class="name" data-act="open" data-t="${esc(m.titre)}">${esc(m.titre)}${r ? (() => { const s = resteDe(m.titre); return !s.tot ? '' : s.n ? `<small class="achat">🛒 ${s.n} ingrédient${s.n > 1 ? 's' : ''} à acheter sur ${s.tot}</small>` : '<small class="achat ok">✓ Tous les ingrédients sont achetés</small>'; })() : '<small>Recette introuvable</small>'}</div>
             ${base ? `<span class="stepper"><button class="mini" data-act="mPortions" data-id="${m.id}" data-d="-1">−</button>${fmt(p)}<button class="mini" data-act="mPortions" data-id="${m.id}" data-d="1">+</button></span>` : ''}
             <select data-act="mJour" data-id="${m.id}">${JOURS.map(([j, l]) => `<option value="${j}" ${m.jour === j ? 'selected' : ''}>${l.slice(0, 3)}${j ? '.' : ''}</option>`).join('')}</select>
             <button class="x" data-act="mDel" data-id="${m.id}">✕</button></div>`;
@@ -1143,12 +1145,12 @@ function renderCourses() {
       <section>
         <h3>À acheter ${total ? `<button class="tog" data-act="share">📤 Partager</button>` : ''}</h3>
         ${restants ? groups.filter(g => g.items.some(i => !set.has(i.k))).map(g => `<div class="rayon">${esc(g.rayon)}</div>
-          <ul class="ing">${g.items.filter(i => !set.has(i.k)).map(it => `<li data-act="ck" data-k="${esc(it.k)}"><span class="box"></span>
+          <ul class="ing">${g.items.filter(i => !set.has(i.k)).map(it => `<li class="cklist"><button class="ckzone" data-act="ck" data-k="${esc(it.k)}" aria-label="Acheté"><span class="box"></span></button>
               <span class="txt">${itemLine(it)}${plusieurs && it.de.length ? `<span class="from">${esc(it.de.join(' · '))}</span>` : ''}</span>
               ${it.de.length ? `<button class="home" data-act="stockAdd" data-n="${esc(it.nom)}" title="Toujours à la maison">🏠</button>` : ''}</li>`).join('')}</ul>`).join('')
           : (total ? '<div class="alldone">✓ Tout est dans le panier !</div>' : '')}
         ${total - restants ? `<details class="stock panier" ${S.panierOuvert ? 'open' : ''}><summary>✓ Dans le panier (${total - restants})</summary>
-          <ul class="ing">${groups.flatMap(g => g.items.filter(i => set.has(i.k))).map(it => `<li data-act="ck" data-k="${esc(it.k)}" class="done"><span class="box"></span><span class="txt">${itemLine(it)}</span></li>`).join('')}</ul></details>` : ''}
+          <ul class="ing">${groups.flatMap(g => g.items.filter(i => set.has(i.k))).map(it => `<li class="cklist done"><button class="ckzone" data-act="ck" data-k="${esc(it.k)}" aria-label="Remettre à acheter"><span class="box"></span></button><span class="txt">${itemLine(it)}</span></li>`).join('')}</ul></details>` : ''}
         <div class="hint" style="margin-top:10px">🏠 = toujours à la maison : l'article ne sera plus proposé.</div>
         ${maison.length ? `<details class="stock"><summary>Déjà à la maison (${maison.length})</summary>
           <ul class="ing">${maison.map(it => `<li><span class="txt">${itemLine(it)}</span><button class="tog" data-act="stockDel" data-n="${esc(it.nom)}">À acheter</button></li>`).join('')}</ul></details>` : ''}
@@ -1625,8 +1627,7 @@ const ACT = {
     $('pNom') && $('pNom').focus();
   },
   pDel: el => { produits.splice(+el.dataset.i, 1); store.set('produits', produits); renderKeep(); },
-  ck: (el, e) => {
-    if (e.target.closest('.home')) return;
+  ck: el => {
     const k = el.dataset.k; const set = new Set(coches);
     set.has(k) ? set.delete(k) : set.add(k); coches = Array.from(set); store.set('coches', coches); renderKeep();
   },

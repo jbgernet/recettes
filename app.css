@@ -214,3 +214,9 @@ section.auto{background:#f4f8f1;border-color:#d6e5cc}
 section.auto h3 .meta{font-weight:400}
 .row.menu.libre .name{cursor:default}
 .row.menu.libre select{margin-left:auto}
+/* Liste de courses : seule la case coche (évite les coches par mégarde en faisant défiler) */
+ul.ing li.cklist{cursor:default;align-items:center}
+.ckzone{flex:none;background:none;border:none;padding:8px;margin:-8px -2px -8px -8px;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.ckzone .box{margin-top:0;width:26px;height:26px}
+.row.menu small.achat{color:var(--accent);font-weight:600}
+.row.menu small.achat.ok{color:var(--ok)}
