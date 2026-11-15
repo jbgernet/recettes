@@ -185,8 +185,11 @@ function ligne(ing, ratio) {
   }
   let html = formatLine(qtxt, val, ing.u, ing.n);
   if (approx) html = html.replace('<b>', '<b>≈ ');
-  // Précisions entre parenthèses : « (environ 300 g) » suit aussi les portions
-  if (adapte) html = html.replace(/\(([^()]*)\)/g, (m0, inner) => '(' + adapterTexte(plain(inner), ratio, null) + ')');
+  // Les quantités écrites dans le nom (« environ 105 g », « (environ 300 g) ») suivent aussi les portions
+  if (adapte) {
+    const k = html.indexOf('</b>'), cut = k < 0 ? 0 : k + 4;
+    html = html.slice(0, cut) + adapterTexte(plain(html.slice(cut)), ratio, null);
+  }
   return html;
 }
 const stars = (n, cls) => { n = Math.round(num(n) || 0); return n ? '<span class="stars ' + (cls || '') + '">' + '★'.repeat(n) + '☆'.repeat(Math.max(0, 5 - n)) + '</span>' : ''; };
@@ -784,19 +787,52 @@ function commentairesHtml(r, coms) {
 }
 
 /* ---------- Mode pas à pas ---------- */
-function ingredientsDeLEtape(texte, ings, ratio) {
-  const t = norm(texte);
-  return ings.filter(i => {
-    const mots = norm(i.n).replace(/\(.*?\)/g, '').split(/[\s']+/).filter(w => w.length >= 3 && !['des', 'les', 'aux', 'pour', 'frais', 'fraiche', 'rouge', 'vert', 'verte', 'blanc', 'noir'].includes(w));
-    return mots.length && t.includes(racine(mots[0]));
-  }).map(i => ligne(i, ratio));
+// Chaque ingrédient est rattaché à l'étape où on l'ajoute vraiment :
+//  3 = mentionné avec sa quantité (« 1 c à soupe de curry »), 2 = après un verbe d'ajout (« ajoutez les crevettes »), 1 = simple mention.
+// S'il est cité avec sa quantité dans plusieurs étapes, il apparaît dans chacune ; sinon dans une seule (la première au meilleur score).
+const STOP_ETAPE = ['des', 'les', 'aux', 'pour', 'frais', 'fraiche', 'rouge', 'vert', 'verte', 'blanc', 'noir', 'petit', 'petite', 'gros', 'grosse', 'belle', 'beau'];
+const RX_AVANT_QTE = /(?:^|[\s(])(?:\d+(?:[.,/]\d+)?|[½¼¾⅓⅔])\s*((?:[a-z.']+\s*){0,5})$/;
+const RX_PAS_QTE = /\b(minutes?|min|secondes?|sec|heures?|h|vitesse|degres|c)\s*$|\b(minutes?|secondes?|heures?|vitesse|puis|et|ou|pendant|sur|dans)\b/;
+const RX_AJOUT = /\b(ajout|incorpor|vers|mett|met|place|depos|dispos|plong|parsem|saupoudr|garni|repart|integr|melang)\w*\s+(?:\S+\s+){0,4}$/;
+function scoreMention(t, cle) {
+  let best = 0, pos = 0;
+  const rx = new RegExp('(^|[^a-z])' + cle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
+  let m;
+  while ((m = rx.exec(t))) {
+    pos = m.index + m[1].length;
+    const avant = t.slice(Math.max(0, pos - 45), pos);
+    let s = 1;
+    const q = avant.match(RX_AVANT_QTE);
+    if (q && !RX_PAS_QTE.test(q[1])) s = 3;
+    else if (RX_AJOUT.test(avant)) s = 2;
+    best = Math.max(best, s);
+  }
+  return best;
+}
+function ingredientsParEtape(etapes, ings) {
+  const textes = etapes.map(e => norm(e).replace(/œ/g, 'oe'));
+  const res = etapes.map(() => []);
+  ings.forEach(i => {
+    const mots = norm(i.n).replace(/œ/g, 'oe').replace(/\(.*?\)/g, '').split(/[\s'’,]+/).filter(w => w.length >= 3 && !STOP_ETAPE.includes(w));
+    if (!mots.length) return;
+    const cle = racine(mots[0]);
+    const scores = textes.map(t => scoreMention(t, cle));
+    const max = Math.max(0, ...scores);
+    if (!max) return;
+    if (max === 3) scores.forEach((s, k) => { if (s === 3) res[k].push(i); });
+    else res[scores.indexOf(max)].push(i);
+  });
+  return res;
+}
+function ingredientsDeLEtape(etapes, k, ings, ratio) {
+  return ingredientsParEtape(etapes, ings)[k].map(i => ligne(i, ratio));
 }
 function renderPas() {
   const r = rec(S.open); if (!r || !S.pas) return;
   const { etapes } = etapesDe(r);
   const i = S.pas.i, n = etapes.length;
   const base = num(r.portions), ratio = base && S.portions ? S.portions / base : 1;
-  const ings = ingredientsDeLEtape(etapes[i], DATA.ingredients[r.titre] || [], ratio);
+  const ings = ingredientsDeLEtape(etapes, i, DATA.ingredients[r.titre] || [], ratio);
   let el = $('pas');
   if (!el) { el = document.createElement('div'); el.id = 'pas'; el.className = 'pas'; document.body.appendChild(el); }
   el.innerHTML = `
