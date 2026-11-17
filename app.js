@@ -34,7 +34,7 @@ const S = {
 
 /* ---------- Utilitaires ---------- */
 const $ = id => document.getElementById(id);
-const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[’]/g, "'").trim();
+const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/œ/g, 'oe').replace(/æ/g, 'ae').replace(/[’]/g, "'").trim();
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const num = s => { const n = parseFloat(String(s == null ? '' : s).replace(',', '.')); return isNaN(n) ? null : n; };
 const plat = s => norm(s).replace(/[^a-z0-9]+/g, ' ').trim();   // recherche sans accents ni ponctuation
