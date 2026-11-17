@@ -1232,7 +1232,7 @@ function renderAdd() {
       <div class="meta">${S.editTitre ? 'Les notes, commentaires et l\'analyse batch cooking sont conservés.' : isAdmin() ? 'Elle sera publiée directement.' : 'Elle sera visible par tous après validation par ' + esc(OWNER) + '.'}</div></header>
     <main>
       ${S.editTitre ? '' : `<section class="auto">
-        <h3>Remplir automatiquement <span class="meta">sans IA</span></h3>
+        <h3>Remplir automatiquement</h3>
         <button class="btn ghost" data-act="pdfPick" style="margin-top:0">📄 Importer un PDF</button>
         ${S.pdfDessine ? `<div class="adapt" style="margin-top:8px">Ce PDF n'a pas de texte lisible (il a sans doute été créé avec « Microsoft Print to PDF », qui dessine les lettres). Plus simple : <b>sélectionnez tout le texte de la page web et collez-le ci-dessous</b>. Sinon, créez le PDF avec « Enregistrer au format PDF » de Chrome ou Edge, ou depuis l'iPhone (Partager → Imprimer → Partager), qui gardent le texte. Ou faites une capture et utilisez « Texte en direct ».</div>` : ''}
         <input type="file" id="pdfFile" accept="application/pdf,.pdf" hidden>
