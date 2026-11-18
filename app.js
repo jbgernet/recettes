@@ -741,6 +741,13 @@ function renderRecipe() {
   if (isAdmin()) {
     ['premiere', 'comm'].forEach(id => { if ($(id)) $(id).oninput = () => { S.avisDirty = true; $('saveAvis').style.display = 'block'; $('avisEtat').textContent = ''; }; });
   }
+  // Le commentaire en cours d'écriture est gardé à chaque frappe (sortie de l'app, minuteur…)
+  if ($('comTxt')) $('comTxt').oninput = e => {
+    const br = comBr[r.titre] = comBr[r.titre] || {};
+    br.texte = e.target.value;
+    if (!br.texte.trim() && !br.note && !br.id) delete comBr[r.titre];
+    saveComBr();
+  };
 }
 
 function avisAdminHtml(r) {
@@ -760,15 +767,22 @@ function avisAdminHtml(r) {
   </section>`;
 }
 
+// Brouillons de commentaires, par recette, gardés sur le téléphone : on peut noter au fil de la recette puis publier.
+// { titre: { texte, note, id } } ; id présent = modification d'un commentaire déjà publié
+let comBr = store.get('comBrouillons', {});
+const saveComBr = () => store.set('comBrouillons', comBr);
 function commentairesHtml(r, coms) {
   const moi = norm(profil.prenom);
   let form;
   if (profil.role === 'famille') {
+    const br = comBr[r.titre] || {}, enEdition = br.id && coms.find(c => c.id === br.id);
     form = `
-      <label class="lbl">Votre avis (${esc(profil.prenom)})</label>
-      <div class="rate blue">${[1, 2, 3, 4, 5].map(n => `<button data-act="comStar" data-n="${n}" class="${S.comNote >= n ? 'on' : ''}">★</button>`).join('')}</div>
-      <textarea class="field" id="comTxt" rows="3" placeholder="Votre commentaire…" style="margin-top:8px"></textarea>
-      <button class="btn" data-act="addCom" style="background:var(--blue);border-color:var(--blue)">Publier</button>`;
+      <label class="lbl">${enEdition ? 'Modifier votre commentaire du ' + esc(String(enEdition.date).replace(/\s*\(modifié.*$/, '')) : 'Votre avis (' + esc(profil.prenom) + ')'}</label>
+      <div class="rate blue">${[1, 2, 3, 4, 5].map(n => `<button data-act="comStar" data-n="${n}" class="${(+br.note || 0) >= n ? 'on' : ''}">★</button>`).join('')}</div>
+      <textarea class="field" id="comTxt" rows="${br.texte && br.texte.length > 120 ? 6 : 3}" placeholder="Votre commentaire… à compléter au fil de la recette" style="margin-top:8px">${esc(br.texte || '')}</textarea>
+      ${br.texte && !enEdition ? '<div class="hint">Brouillon enregistré sur ce téléphone.</div>' : ''}
+      <button class="btn" data-act="addCom" style="background:var(--blue);border-color:var(--blue)">${enEdition ? 'Enregistrer les modifications' : 'Publier'}</button>
+      ${enEdition ? '<button class="btn ghost" data-act="comAnnuler" style="border-color:var(--line);color:var(--muted)">Annuler</button>' : ''}`;
   } else if (!isAdmin()) {
     form = `<div class="hint">Pour noter et commenter, entrez le code famille dans l'onglet 👤.</div>`;
   } else form = '';
@@ -779,6 +793,7 @@ function commentairesHtml(r, coms) {
     ${coms.length ? coms.map(c => `
       <div class="com">
         ${(isAdmin() || (moi && norm(c.auteur) === moi)) ? `<button class="del" data-act="delCom" data-id="${esc(c.id)}">${S.confirm === 'com' + c.id ? 'Confirmer ?' : 'Supprimer'}</button>` : ''}
+        ${profil.role === 'famille' && moi && norm(c.auteur) === moi ? `<button class="del" data-act="editCom" data-id="${esc(c.id)}">Modifier</button>` : ''}
         <span class="who">${esc(c.auteur)}</span> <span class="meta">· ${esc(c.date)}</span> ${stars(c.note, 'blue')}
         ${c.texte ? `<div class="txt">${esc(c.texte)}</div>` : ''}
       </div>`).join('') : '<div class="hint">Pas encore de commentaire.</div>'}
@@ -1613,14 +1628,33 @@ const ACT = {
   },
   today: () => { $('premiere').value = dateFr(); $('premiere').dispatchEvent(new Event('input')); },
   saveAvis: () => saveAvis(),
-  comStar: el => { const n = +el.dataset.n; S.comNote = S.comNote === n ? 0 : n; document.querySelectorAll('[data-act=comStar]').forEach(s => s.classList.toggle('on', S.comNote >= +s.dataset.n)); },
+  comStar: el => {
+    const n = +el.dataset.n, br = comBr[S.open] = comBr[S.open] || {};
+    br.note = (+br.note || 0) === n ? 0 : n; saveComBr();
+    document.querySelectorAll('[data-act=comStar]').forEach(s => s.classList.toggle('on', br.note >= +s.dataset.n));
+  },
+  editCom: el => {
+    const c = DATA.commentaires.find(x => x.id === el.dataset.id); if (!c) return;
+    comBr[S.open] = { texte: c.texte || '', note: +c.note || 0, id: c.id }; saveComBr(); renderKeep();
+    const t = $('comTxt'); if (t) { t.scrollIntoView({ block: 'center' }); t.focus(); }
+  },
+  comAnnuler: () => { delete comBr[S.open]; saveComBr(); renderKeep(); },
   addCom: async el => {
-    const texte = $('comTxt').value.trim();
-    if (!texte && !S.comNote) return toast('Écrivez un commentaire ou donnez une note.');
+    const br = comBr[S.open] || {};
+    const texte = $('comTxt').value.trim(), note = +br.note || 0;
+    if (!texte && !note) return toast('Écrivez un commentaire ou donnez une note.');
     el.disabled = true;
     try {
-      const c = await api('addComment', { titre: S.open, note: S.comNote, texte });
-      DATA.commentaires.push(c); store.set('data', DATA); S.comNote = 0; renderKeep(); toast('Merci pour votre avis !');
+      if (br.id) {
+        const c = await api('updateComment', { id: br.id, note, texte });
+        const i = DATA.commentaires.findIndex(x => x.id === br.id);
+        if (i >= 0) DATA.commentaires[i] = c; else DATA.commentaires.push(c);
+        toast('Commentaire modifié.');
+      } else {
+        const c = await api('addComment', { titre: S.open, note, texte });
+        DATA.commentaires.push(c); toast('Merci pour votre avis !');
+      }
+      delete comBr[S.open]; saveComBr(); store.set('data', DATA); renderKeep();
     } catch (e) { el.disabled = false; toast(e.message, 5000); }
   },
   delCom: async el => {

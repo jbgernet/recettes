@@ -62,6 +62,7 @@ const ACTIONS = {
   addRecette: req => addRecette_(req),
   updateRecette: req => updateRecette_(req),
   addComment: req => addComment_(req),
+  updateComment: req => updateComment_(req),
   deleteComment: req => deleteComment_(req),
   saveAvis: req => saveAvis_(req),
   publish: req => publish_(req),
@@ -383,6 +384,27 @@ function addComment_(req) {
     const c = { id: Utilities.getUuid().slice(0, 8), titre, auteur, date: dateFr_(), note: String(note), texte };
     sc.appendRow([c.id, c.titre, c.auteur, c.date, note, c.texte]);
     return c;
+  });
+}
+
+// Modifier son propre commentaire (texte et note) ; la date d'origine est gardée, « (modifié le …) » est ajouté
+function updateComment_(req) {
+  const role = exiger_(req, 'famille');
+  let note = parseInt(req.note, 10);
+  note = note >= 1 && note <= 5 ? note : '';
+  const texte = txt_(req.texte, 3000);
+  if (!texte && !note) throw new Error('Le commentaire est vide.');
+  return withLock_(() => {
+    const sc = commentSheet_(ss_());
+    const n = sc.getLastRow();
+    if (n < 2) throw new Error('Commentaire introuvable.');
+    const v = sc.getRange(2, 1, n - 1, 4).getDisplayValues();
+    const i = v.findIndex(x => x[0] === String(req.id));
+    if (i < 0) throw new Error('Commentaire introuvable.');
+    if (role !== 'admin' && norm_(v[i][2]) !== norm_(req.auteur)) throw new Error('Vous ne pouvez modifier que vos propres commentaires.');
+    const date = String(v[i][3]).replace(/\s*\(modifié le .*\)$/, '') + ' (modifié le ' + dateFr_() + ')';
+    sc.getRange(i + 2, 4, 1, 3).setValues([[date, note, texte]]);
+    return { id: String(req.id), titre: v[i][1], auteur: v[i][2], date, note: String(note), texte };
   });
 }
 
